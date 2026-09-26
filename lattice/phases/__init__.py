@@ -1,0 +1,1 @@
+"""Lattice phases subpackage."""
