@@ -150,6 +150,111 @@ def train_jepa(jepa: JepaModel, tokens: torch.Tensor, config: ToyConfig,
     return history
 
 
+@dataclass
+class ContrastiveModel:
+    '''SimCLR-style contrastive arm: same encoder architecture as the JEPA
+    context encoder, no target network. A projector maps pooled features to
+    the space the InfoNCE loss is computed in (SimCLR practice); downstream
+    probes use the encoder's raw pooled output, not the projection, so the
+    comparison to AR/JEPA pooled features stays apples-to-apples.
+    '''
+    encoder: TinyTransformer
+    projector: Predictor
+
+    def num_params(self) -> int:
+        return self.encoder.num_params() + sum(
+            p.numel() for p in self.projector.parameters())
+
+
+def build_contrastive(vocab_size: int, config: ToyConfig) -> ContrastiveModel:
+    encoder = TinyTransformer(vocab_size, config.dim, config.n_layers,
+                              config.n_heads, config.max_len)
+    projector = Predictor(config.dim)
+    return ContrastiveModel(encoder, projector)
+
+
+def make_augmented_view(batch: torch.Tensor, rng: random.Random,
+                        crop_range: tuple[float, float] = (0.7, 0.9),
+                        mask_rate: float = 0.1) -> torch.Tensor:
+    '''Two independent calls on the same batch produce the positive pair
+    for InfoNCE: a random contiguous crop (rest set to PAD) plus random
+    per-character masking within the kept span. This is the toy-scale
+    stand-in for SimCLR-style augmentation (spec calls for "augmentation
+    pairs"); there is no vision-style crop/color-jitter equivalent for text,
+    so span-crop + token dropout is used instead.
+    '''
+    B, T = batch.shape
+    out = batch.clone()
+    for b in range(B):
+        crop_len = max(1, min(T, int(T * rng.uniform(*crop_range))))
+        start = rng.randint(0, T - crop_len)
+        keep = torch.zeros(T, dtype=torch.bool)
+        keep[start:start + crop_len] = True
+        out[b, ~keep] = CharTokenizer.PAD
+        for t in range(start, start + crop_len):
+            if rng.random() < mask_rate:
+                out[b, t] = CharTokenizer.MASK
+    return out
+
+
+def info_nce_loss(z1: torch.Tensor, z2: torch.Tensor,
+                  temperature: float = 0.1) -> torch.Tensor:
+    '''NT-Xent / InfoNCE: each view's positive is its augmented partner;
+    all other views in the batch (both augmentations) are negatives.'''
+    B = z1.size(0)
+    z = F.normalize(torch.cat([z1, z2], dim=0), dim=-1)
+    sim = z @ z.T / temperature
+    sim.fill_diagonal_(float('-inf'))
+    targets = torch.cat([
+        torch.arange(B, 2 * B), torch.arange(0, B),
+    ]).to(z.device)
+    return F.cross_entropy(sim, targets)
+
+
+def train_contrastive(model: ContrastiveModel, tokens: torch.Tensor,
+                      config: ToyConfig, device: str) -> list[float]:
+    model.encoder.to(device).train()
+    model.projector.to(device).train()
+    rng = random.Random(config.seed)
+    opt = torch.optim.AdamW(
+        list(model.encoder.parameters()) + list(model.projector.parameters()),
+        lr=config.lr,
+    )
+    n = tokens.size(0)
+    steps_per_epoch = max(1, n // config.batch_size)
+    history = []
+    for _ in range(config.epochs):
+        perm = torch.randperm(n)
+        for i in range(steps_per_epoch):
+            idx = perm[i * config.batch_size:(i + 1) * config.batch_size]
+            batch = tokens[idx]
+            view1 = make_augmented_view(batch, rng).to(device)
+            view2 = make_augmented_view(batch, rng).to(device)
+            h1 = model.encoder(view1, causal=False).mean(dim=1)
+            h2 = model.encoder(view2, causal=False).mean(dim=1)
+            p1, p2 = model.projector(h1), model.projector(h2)
+            loss = info_nce_loss(p1, p2)
+
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            history.append(float(loss.item()))
+    return history
+
+
+def encode_pooled_contrastive(model: ContrastiveModel, tokens: torch.Tensor,
+                              device: str, batch_size: int = 256
+                              ) -> torch.Tensor:
+    model.encoder.eval()
+    feats = []
+    with torch.no_grad():
+        for i in range(0, tokens.size(0), batch_size):
+            batch = tokens[i:i + batch_size].to(device)
+            h = model.encoder(batch, causal=False)
+            feats.append(h.mean(dim=1).cpu())
+    return torch.cat(feats, dim=0)
+
+
 def encode_pooled_ar(model: ARLanguageModel, tokens: torch.Tensor,
                      device: str, batch_size: int = 256) -> torch.Tensor:
     model.eval()

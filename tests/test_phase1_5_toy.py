@@ -1,9 +1,11 @@
 import torch
 
 from lattice.phases.phase1_5_toy import (
-    ToyConfig, build_composition_task, build_jepa, composition_accuracy,
-    effective_rank, encode_pooled_ar, encode_pooled_jepa,
-    linear_probe_accuracy, make_block_mask, train_ar, train_jepa, uniformity,
+    ToyConfig, build_composition_task, build_contrastive, build_jepa,
+    composition_accuracy, effective_rank, encode_pooled_ar,
+    encode_pooled_contrastive, encode_pooled_jepa, info_nce_loss,
+    linear_probe_accuracy, make_augmented_view, make_block_mask, train_ar,
+    train_contrastive, train_jepa, uniformity,
 )
 from lattice.tiny_transformer import (
     ARLanguageModel, Predictor, TinyTransformer, ema_update, tau_schedule,
@@ -149,6 +151,42 @@ def test_composition_accuracy_recovers_separable_attributes():
     assert result['color_accuracy'] > 0.9
     assert result['shape_accuracy'] > 0.9
     assert result['joint_accuracy'] > 0.8
+
+
+def test_augmented_view_pads_outside_crop_and_preserves_length():
+    import random
+    rng = random.Random(0)
+    batch = torch.randint(3, 20, (4, 20))
+    view = make_augmented_view(batch, rng, crop_range=(0.5, 0.5), mask_rate=0.0)
+    assert view.shape == batch.shape
+    for b in range(4):
+        n_pad = (view[b] == 0).sum().item()
+        assert n_pad >= 10 - 1  # ~half the sequence padded out (off-by-one ok)
+
+
+def test_info_nce_loss_lower_for_aligned_positive_pairs():
+    torch.manual_seed(0)
+    B, D = 8, 16
+    base = torch.randn(B, D)
+    aligned = base + 0.01 * torch.randn(B, D)
+    misaligned = base[torch.randperm(B)] + 0.01 * torch.randn(B, D)
+    aligned_loss = info_nce_loss(base, aligned)
+    misaligned_loss = info_nce_loss(base, misaligned)
+    assert aligned_loss.item() < misaligned_loss.item()
+
+
+def test_contrastive_trains_and_loss_decreases():
+    torch.manual_seed(0)
+    tok = CharTokenizer.fit(['hello world this is a test of the contrastive '
+                             'model training loop end to end'])
+    tokens = tok.encode_batch(['hello world this is a test'] * 32, max_len=16)
+    config = ToyConfig(dim=16, n_layers=2, n_heads=2, max_len=16,
+                       batch_size=8, epochs=5, lr=1e-2)
+    model = build_contrastive(tok.vocab_size, config)
+    history = train_contrastive(model, tokens, config, device='cpu')
+    assert history[-1] < history[0]
+    feats = encode_pooled_contrastive(model, tokens[:8], device='cpu')
+    assert feats.shape == (8, config.dim)
 
 
 def test_uniformity_and_effective_rank_run():

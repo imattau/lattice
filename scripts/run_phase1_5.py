@@ -1,7 +1,15 @@
-'''Run the Phase 1.5 toy-scale JEPA-vs-AR falsification (PLAN.md
-"Phase 1.5"). See PHASE1_5_RESULTS.md for the honest scope reduction from
-the plan's 10M-50M-param / 100M-1B-token / 1-3 PF-day spec to what a single
-interactive session on one consumer GPU can actually run.
+'''Run the Phase 1.5 toy-scale JEPA-vs-AR-vs-contrastive comparison
+(PLAN.md "Phase 1.5"). See PHASE1_5_RESULTS.md for the honest scope
+reduction from the plan's 10M-50M-param / 100M-1B-token / 1-3 PF-day spec
+to what a single interactive session on one consumer GPU can actually run.
+
+The contrastive arm (InfoNCE on augmented-view positive pairs) is a third,
+matched-architecture/data/budget point that distinguishes two hypotheses
+the two-arm comparison alone cannot: if contrastive beats AR where JEPA
+lost, the problem is JEPA's specific objective, not "latent representation
+learning" in general; if contrastive also loses, the gap is more likely
+about token-level vs. latent-level training for language compositionality
+at this scale, independent of which latent objective is used.
 '''
 from __future__ import annotations
 import argparse
@@ -12,9 +20,10 @@ from pathlib import Path
 import torch
 
 from lattice.phases.phase1_5_toy import (
-    ToyConfig, build_composition_task, build_jepa, composition_accuracy,
-    effective_rank, encode_pooled_ar, encode_pooled_jepa,
-    linear_probe_accuracy, train_ar, train_jepa, uniformity,
+    ToyConfig, build_composition_task, build_contrastive, build_jepa,
+    composition_accuracy, effective_rank, encode_pooled_ar,
+    encode_pooled_contrastive, encode_pooled_jepa, linear_probe_accuracy,
+    train_ar, train_contrastive, train_jepa, uniformity,
 )
 from lattice.tiny_transformer import ARLanguageModel, TinyTransformer
 from lattice.toy_corpus import (
@@ -78,34 +87,43 @@ def main():
     print(f'  final loss={jepa_history[-1]:.4f}  '
          f'trained_params={jepa.num_params():,}  wall={jepa_seconds:.1f}s')
 
+    print(f'\nTraining contrastive (InfoNCE, augmented-view pairs) on '
+         f'{device} ...')
+    contrastive = build_contrastive(tokenizer.vocab_size, config)
+    t0 = time.time()
+    contrastive_history = train_contrastive(contrastive, pretrain_tokens,
+                                            config, device)
+    contrastive_seconds = time.time() - t0
+    print(f'  final loss={contrastive_history[-1]:.4f}  '
+         f'trained_params={contrastive.num_params():,}  '
+         f'wall={contrastive_seconds:.1f}s')
+
+    arms = [
+        ('ar', encode_pooled_ar, ar_model),
+        ('jepa', encode_pooled_jepa, jepa),
+        ('contrastive', encode_pooled_contrastive, contrastive),
+    ]
+
     print('\nLinear probes: BANKING77 intent (77-way), '
          'Phase 1 triage department (10-way) ...')
     probe_results = {}
-    for name, loader, offset, limit in [
-        ('banking77_intent', load_banking77_labeled, 4000, 3000),
-    ]:
-        texts, labels = loader(offset=offset, limit=limit)
-        label_idx, label_map = _label_to_index(labels)
-        n_train = int(0.8 * len(texts))
-        tokens = tokenizer.encode_batch(texts, config.max_len)
-        for model_name, encode_fn, model_obj in [
-            ('ar', encode_pooled_ar, ar_model),
-            ('jepa', encode_pooled_jepa, jepa),
-        ]:
-            feats = encode_fn(model_obj, tokens, device)
-            acc = linear_probe_accuracy(
-                feats[:n_train], label_idx[:n_train],
-                feats[n_train:], label_idx[n_train:], len(label_map),
-            )
-            probe_results.setdefault(name, {})[model_name] = acc
+    texts, labels = load_banking77_labeled(offset=4000, limit=3000)
+    label_idx, label_map = _label_to_index(labels)
+    n_train = int(0.8 * len(texts))
+    tokens = tokenizer.encode_batch(texts, config.max_len)
+    for model_name, encode_fn, model_obj in arms:
+        feats = encode_fn(model_obj, tokens, device)
+        acc = linear_probe_accuracy(
+            feats[:n_train], label_idx[:n_train],
+            feats[n_train:], label_idx[n_train:], len(label_map),
+        )
+        probe_results.setdefault('banking77_intent', {})[model_name] = acc
 
     texts, labels = load_triage_labeled(limit=3000)
     tokens = tokenizer.encode_batch(texts, config.max_len)
     labels_t = torch.tensor(labels)
     n_train = int(0.8 * len(texts))
-    for model_name, encode_fn, model_obj in [
-        ('ar', encode_pooled_ar, ar_model), ('jepa', encode_pooled_jepa, jepa),
-    ]:
+    for model_name, encode_fn, model_obj in arms:
         feats = encode_fn(model_obj, tokens, device)
         acc = linear_probe_accuracy(
             feats[:n_train], labels_t[:n_train],
@@ -116,9 +134,7 @@ def main():
     print('Compositional generalization (held-out color/shape pairings) ...')
     comp_results = {}
     split = build_composition_task(tokenizer, config.max_len)
-    for model_name, encode_fn, model_obj in [
-        ('ar', encode_pooled_ar, ar_model), ('jepa', encode_pooled_jepa, jepa),
-    ]:
+    for model_name, encode_fn, model_obj in arms:
         train_feats = encode_fn(model_obj, split.train_tokens, device)
         test_feats = encode_fn(model_obj, split.test_tokens, device)
         comp_results[model_name] = composition_accuracy(
@@ -128,9 +144,7 @@ def main():
     geometry = {}
     probe_tokens_all = tokenizer.encode_batch(
         load_banking77_labeled(offset=4000, limit=1000)[0], config.max_len)
-    for model_name, encode_fn, model_obj in [
-        ('ar', encode_pooled_ar, ar_model), ('jepa', encode_pooled_jepa, jepa),
-    ]:
+    for model_name, encode_fn, model_obj in arms:
         feats = encode_fn(model_obj, probe_tokens_all, device)
         geometry[model_name] = {
             'uniformity': uniformity(feats),
@@ -155,6 +169,12 @@ def main():
             'loss_history_every_10': jepa_history[::10],
             'wall_seconds': jepa_seconds,
         },
+        'contrastive': {
+            'num_trained_params': contrastive.num_params(),
+            'final_loss': contrastive_history[-1],
+            'loss_history_every_10': contrastive_history[::10],
+            'wall_seconds': contrastive_seconds,
+        },
         'linear_probe_accuracy': probe_results,
         'composition_task_accuracy': comp_results,
         'representation_geometry': geometry,
@@ -164,6 +184,8 @@ def main():
         'ar_backbone': ar_model.backbone.state_dict(),
         'jepa_context_encoder': jepa.context_encoder.state_dict(),
         'jepa_predictor': jepa.predictor.state_dict(),
+        'contrastive_encoder': contrastive.encoder.state_dict(),
+        'contrastive_projector': contrastive.projector.state_dict(),
         'tokenizer_chars': tokenizer.chars,
         'config': vars(args),
     }, ckpt_path)
