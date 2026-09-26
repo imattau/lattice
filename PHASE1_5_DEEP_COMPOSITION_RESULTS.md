@@ -12,13 +12,17 @@ register) combined with a frozen-linear-probe evaluation, rather than a
 surface-level text-format problem. This still does not resolve whether the
 shallow-task compositional gap is real.
 
-**Update — see `PHASE1_5_COGS_STYLE_RESULTS.md`:** a follow-up task using
+**Update — see `PHASE1_5_COGS_STYLE_RESULTS.md` and
+`PHASE1_5_COGS_REPLICATION_RESULTS.md`:** a follow-up task using
 primitives verified present in the actual pretraining corpus (only the
 *pairing* held out, COGS-style) confirms the exposure diagnosis directly:
-all four arms clear chance by a wide margin on that task, and JEPA's best
-layer outright beats AR's. The floor result on *this* document's task
-reflects zero exposure to the indirection *structure*, not a general
-inability of any objective to generalize compositionally at this scale.
+all four arms clear chance by a wide margin on that task. (An initial
+reading of that result — JEPA's best layer beating AR's — did not survive
+a fairness check and was retracted; under held-out layer selection and on
+a replication task, AR wins or ties instead.) The floor result on *this*
+document's task reflects zero exposure to the indirection *structure*, not
+a general inability of any objective to generalize compositionally at
+this scale — that diagnosis stands independent of the retraction above.
 The stronger "no single token predicts the answer" property this document
 targets remains untested, not refuted.
 

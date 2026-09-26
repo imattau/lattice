@@ -1,10 +1,11 @@
 import torch
 
 from lattice.phases.phase1_5_toy import (
-    _COGS_DEPARTMENTS, _COGS_HELD_OUT, _COGS_URGENCY, _COLORS, _SHAPES,
-    ToyConfig, build_ar_jepa, build_composition_task, build_cogs_style_task,
-    build_contrastive, build_deep_composition_task, build_jepa,
-    composition_accuracy, effective_rank, encode_pooled_ar,
+    _COGS2_HELD_OUT, _COGS2_NAMES, _COGS2_STATUS, _COGS_DEPARTMENTS,
+    _COGS_HELD_OUT, _COGS_URGENCY, _COLORS, _SHAPES, ToyConfig,
+    build_ar_jepa, build_composition_task, build_cogs_style_task,
+    build_cogs_style_task_v2, build_contrastive, build_deep_composition_task,
+    build_jepa, composition_accuracy, effective_rank, encode_pooled_ar,
     encode_pooled_contrastive, encode_pooled_jepa, info_nce_loss,
     linear_probe_accuracy, make_augmented_view, make_block_mask, train_ar,
     train_ar_jepa, train_contrastive, train_jepa, uniformity,
@@ -258,6 +259,31 @@ def test_cogs_task_is_deterministic():
     a = build_cogs_style_task(tok, max_len=192, n_per_combo=4, seed=0)
     b = build_cogs_style_task(tok, max_len=192, n_per_combo=4, seed=0)
     assert torch.equal(a.train_tokens, b.train_tokens)
+
+
+def test_cogs_v2_task_primitives_are_present_in_the_actual_pretraining_corpus():
+    corpus_blob = ' '.join(build_pretrain_corpus(seed=0))
+    for name in _COGS2_NAMES:
+        assert name in corpus_blob
+    for status in _COGS2_STATUS:
+        assert status in corpus_blob
+
+
+def test_cogs_v2_task_holds_out_pairings_but_not_primitives():
+    tok = CharTokenizer.fit(['the alpha process has status ok. the beta '
+                             'process has status pending.'])
+    split = build_cogs_style_task_v2(tok, max_len=192, n_per_combo=4, seed=0)
+    assert set(split.test_color.tolist()) <= set(split.train_color.tolist())
+    assert set(split.test_shape.tolist()) <= set(split.train_shape.tolist())
+    train_pairs = set(zip(split.train_color.tolist(), split.train_shape.tolist()))
+    test_pairs = set(zip(split.test_color.tolist(), split.test_shape.tolist()))
+    assert train_pairs.isdisjoint(test_pairs)
+    assert test_pairs == _COGS2_HELD_OUT
+
+
+def test_cogs_v2_task_uses_different_primitives_than_v1():
+    assert set(_COGS2_NAMES).isdisjoint(_COGS_DEPARTMENTS)
+    assert set(_COGS2_STATUS).isdisjoint(_COGS_URGENCY)
 
 
 def test_composition_accuracy_infers_class_count_from_labels():

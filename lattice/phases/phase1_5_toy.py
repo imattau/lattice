@@ -23,7 +23,7 @@ from lattice.synthetic_triage import DEPARTMENT_NAMES, _TOPICS, _URGENT_PHRASES
 from lattice.tiny_transformer import (
     ARLanguageModel, Predictor, TinyTransformer, ema_update, tau_schedule,
 )
-from lattice.toy_corpus import CharTokenizer
+from lattice.toy_corpus import CharTokenizer, _JSON_NAMES, _JSON_STATUS
 
 
 @dataclass
@@ -588,45 +588,84 @@ assert len(_COGS_DEPARTMENTS) == 4 and len(_COGS_URGENCY) == 4
 _COGS_HELD_OUT = {(0, 1), (1, 2), (2, 3), (3, 0)}
 
 
-def _gen_cogs_text(rng: random.Random, department_idx: int, urgency_idx: int
-                   ) -> str:
+def _cogs_template_triage(rng: random.Random, a: str, b: str) -> str:
     topic = rng.choice(_TOPICS)
-    dept = _COGS_DEPARTMENTS[department_idx]
-    urgency = _COGS_URGENCY[urgency_idx]
-    return f'I have a question about {topic}. {urgency} Please route this to {dept}.'
+    return f'I have a question about {topic}. {b} Please route this to {a}.'
+
+
+# A second, independently-sourced COGS-style task for replication
+# (per follow-up review: "same corpus, different primitives, different
+# held-out pairing"). `_JSON_NAMES`/`_JSON_STATUS` come from
+# lattice.toy_corpus's synthetic JSON generator -- a completely different
+# pretraining-corpus tier from the triage-derived department/urgency task
+# above (code+JSON vs. natural-language triage text), so a replicated
+# result here isn't just re-testing the same corpus slice.
+_COGS2_NAMES = _JSON_NAMES[:4]
+_COGS2_STATUS = list(_JSON_STATUS)
+assert len(_COGS2_NAMES) == 4 and len(_COGS2_STATUS) == 4
+_COGS2_HELD_OUT = {(0, 2), (1, 3), (2, 0), (3, 1)}
+
+
+def _cogs_template_json(rng: random.Random, a: str, b: str) -> str:
+    return f'the {a} process has status {b}.'
+
+
+def _build_cogs_style_task(
+    tokenizer: CharTokenizer, max_len: int, primitives_a: list[str],
+    primitives_b: list[str], held_out: set[tuple[int, int]],
+    template_fn, n_per_combo: int, seed: int,
+) -> CompositionSplit:
+    rng = random.Random(seed)
+    train_texts, train_a, train_b = [], [], []
+    test_texts, test_a, test_b = [], [], []
+    for ai in range(len(primitives_a)):
+        for bi in range(len(primitives_b)):
+            is_held_out = (ai, bi) in held_out
+            for _ in range(n_per_combo):
+                text = template_fn(rng, primitives_a[ai], primitives_b[bi])
+                if is_held_out:
+                    test_texts.append(text)
+                    test_a.append(ai)
+                    test_b.append(bi)
+                else:
+                    train_texts.append(text)
+                    train_a.append(ai)
+                    train_b.append(bi)
+    return CompositionSplit(
+        train_tokens=tokenizer.encode_batch(train_texts, max_len),
+        train_color=torch.tensor(train_a),
+        train_shape=torch.tensor(train_b),
+        test_tokens=tokenizer.encode_batch(test_texts, max_len),
+        test_color=torch.tensor(test_a),
+        test_shape=torch.tensor(test_b),
+    )
 
 
 def build_cogs_style_task(tokenizer: CharTokenizer, max_len: int,
                           n_per_combo: int = 16, seed: int = 0
                           ) -> CompositionSplit:
-    '''`CompositionSplit.train_color`/`train_shape` are reused generically
-    here for department index / urgency index -- `composition_accuracy`
-    only cares about two integer-labeled attributes, not their semantics.
+    '''Department names x urgency phrases, both verified present verbatim in
+    the actual Phase 1 triage documents sampled into the pretraining
+    corpus. `CompositionSplit.train_color`/`train_shape` are reused
+    generically here for department index / urgency index --
+    `composition_accuracy` only cares about two integer-labeled attributes,
+    not their semantics.
     '''
-    rng = random.Random(seed)
-    train_texts, train_dept, train_urg = [], [], []
-    test_texts, test_dept, test_urg = [], [], []
-    for di in range(len(_COGS_DEPARTMENTS)):
-        for ui in range(len(_COGS_URGENCY)):
-            is_held_out = (di, ui) in _COGS_HELD_OUT
-            for _ in range(n_per_combo):
-                text = _gen_cogs_text(rng, di, ui)
-                if is_held_out:
-                    test_texts.append(text)
-                    test_dept.append(di)
-                    test_urg.append(ui)
-                else:
-                    train_texts.append(text)
-                    train_dept.append(di)
-                    train_urg.append(ui)
-    return CompositionSplit(
-        train_tokens=tokenizer.encode_batch(train_texts, max_len),
-        train_color=torch.tensor(train_dept),
-        train_shape=torch.tensor(train_urg),
-        test_tokens=tokenizer.encode_batch(test_texts, max_len),
-        test_color=torch.tensor(test_dept),
-        test_shape=torch.tensor(test_urg),
-    )
+    return _build_cogs_style_task(
+        tokenizer, max_len, _COGS_DEPARTMENTS, _COGS_URGENCY, _COGS_HELD_OUT,
+        _cogs_template_triage, n_per_combo, seed)
+
+
+def build_cogs_style_task_v2(tokenizer: CharTokenizer, max_len: int,
+                             n_per_combo: int = 16, seed: int = 0
+                             ) -> CompositionSplit:
+    '''Replication task with different primitives from a different
+    pretraining-corpus tier: JSON `name` and `status` values, verbatim in
+    the synthetic-JSON slice of `build_pretrain_corpus` (a different corpus
+    source than the triage-derived department/urgency task above).'''
+    return _build_cogs_style_task(
+        tokenizer, max_len, _COGS2_NAMES, _COGS2_STATUS, _COGS2_HELD_OUT,
+        _cogs_template_json, n_per_combo, seed)
 
 
 def composition_accuracy(

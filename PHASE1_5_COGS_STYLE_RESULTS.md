@@ -1,13 +1,20 @@
 # Phase 1.5 Follow-up: COGS-Style Compositional Generalization
 
-Status: **this is the experiment that resolves the exposure confound, and
-it materially updates the Phase 1.5 narrative in JEPA's favor.** With
+Status: **the exposure-confound diagnosis below holds; the "JEPA beats
+AR" headline this document originally led with does not — see
+`PHASE1_5_COGS_REPLICATION_RESULTS.md`, which retracts it.** With
 primitives verifiably present in the actual pretraining corpus and only
 the specific pairing held out, all four arms generalize well above chance
-— and **JEPA's best layer (0.922) exceeds AR's best layer (0.859)**,
-the first result in this entire toy pilot where a latent-primary objective
-beats the AR baseline outright. Contrastive remains the weakest arm,
-consistent with every other result so far.
+(this part is unaffected and still resolves the exposure confound from
+`PHASE1_5_DEEP_COMPOSITION_RESULTS.md`). The original headline — JEPA's
+best layer (0.922) beating AR's best layer (0.859) — turned out to be a
+selection-bias artifact: under held-out layer selection (chosen via a
+different task, not the COGS task's own test set) and on a second,
+independently-constructed replication task, **JEPA loses to AR on both**.
+AR+JEPA-auxiliary, not pure JEPA, is the arm with a genuine,
+non-cherry-picked positive result here. Contrastive remains the weakest
+arm throughout, now more emphatically (it fails outright, 0.000, on the
+replication task).
 
 ## Motivation
 
@@ -74,14 +81,19 @@ Reading:
   generalize compositionally at this toy scale. Given primitives the
   model has actually seen, all four arms recombine them into unseen
   pairings successfully.
-- **JEPA's best layer (0.922, layer 2) is the single highest score any
-  arm achieves on this task — higher than AR's best layer (0.859, layer
-  3).** This is the first result anywhere in Phase 1.5 where a
-  latent-primary objective outright beats the AR baseline, not merely
-  narrows a gap. It should not be over-read as "JEPA wins" in general —
-  one toy-scale task, one seed — but it is a real, positive data point
-  that complicates the "AR simply wins" reading the shallow lexical task
-  produced.
+- **JEPA's best layer (0.922, layer 2) was initially reported as the
+  single highest score any arm achieves on this task — higher than AR's
+  best layer (0.859, layer 3) — the first result anywhere in Phase 1.5
+  where a latent-primary objective outright beats AR. This did not
+  survive scrutiny: `PHASE1_5_COGS_REPLICATION_RESULTS.md` shows it was a
+  selection-bias artifact (JEPA's "best layer" was cherry-picked from this
+  task's own test set; picked independently via a different task's
+  per-layer accuracy instead, JEPA's selected layer scores 0.688, below
+  AR, and the same pattern holds on a second replication task where AR
+  sits at 1.000 on every layer while JEPA ranges 0.500-1.000 depending on
+  depth).** Retracted as a general claim; kept here, struck through in
+  spirit, so the record shows what was found and what happened when it
+  was checked, rather than quietly disappearing.
 - **Contrastive is again the weakest arm** (0.594 best, well below the
   other three), consistent with every prior Phase 1.5 result. Whatever is
   limiting contrastive's representation quality at this scale, it isn't
@@ -111,20 +123,25 @@ pointer/indirection structure," which remains untested at this scale for
 all four arms. The two follow-ups measure genuinely different things; this
 one resolves cleanly, the indirection one does not yet.
 
-## Updated picture across all three compositional tasks
+## Updated picture across all three compositional tasks (post-correction)
 
-| Task | What it actually tests | AR | JEPA | Contrastive |
+| Task | What it actually tests | AR | JEPA (fair, held-out-selected layer) | Contrastive |
 |---|---|---:|---:|---:|
 | Shallow (lexical) | substring detection of both attributes | 0.938-1.000 | 0.625-0.812 | 0.188-0.562 |
 | Deep (indirection, either register) | 2-hop binding, zero pretraining exposure | floor (~0.03) | floor (~0.03) | floor (~0.02) |
-| COGS-style (this doc) | novel pairing of seen primitives | 0.812-0.859 | **0.766-0.922** | 0.609 |
+| COGS-style, task 1 (dept/urgency) | novel pairing of seen primitives | 0.797 | 0.688 | 0.438 |
+| COGS-style, task 2 (json name/status) | novel pairing of seen primitives (different corpus tier) | 1.000 | 0.500 | 0.000 |
 
-The shallow task's "AR wins comprehensively" reading turns out to depend
-heavily on which compositional property is being tested and whether the
-model had ever seen the relevant vocabulary before. On the property COGS
-actually measures, with a fair exposure baseline, **JEPA is not behind AR
-— at its best layer it's ahead.** The indirection task's stronger property
-remains genuinely untested, not refuted, at this toy scale.
+The shallow task's "AR wins comprehensively" reading does depend on
+whether the model had seen the relevant vocabulary before — the exposure
+diagnosis from `PHASE1_5_DEEP_COMPOSITION_RESULTS.md` stands. But once
+layer selection is done fairly (`PHASE1_5_COGS_REPLICATION_RESULTS.md`),
+**AR wins or ties on every compositional task attempted in this pilot.**
+The one arm with a genuine, non-cherry-picked positive signal alongside
+AR is AR+JEPA-auxiliary (1.000/0.828 on the two COGS tasks, identical
+across every layer, no selection needed) — not pure JEPA. The indirection
+task's stronger property remains genuinely untested, not refuted, at this
+toy scale.
 
 ## Follow-ups
 
@@ -138,6 +155,8 @@ remains genuinely untested, not refuted, at this toy scale.
    binding under interference using still-familiar primitives — a
    harder, more informative middle ground between this task and the
    indirection task's floor.
-3. Re-run at more seeds — this is a single seed, 64-example test set;
+3. ~~Re-run at more seeds — this is a single seed, 64-example test set;
    the JEPA-beats-AR result, while real, should be treated as
-   directional until replicated.
+   directional until replicated.~~ **Done — see
+   `PHASE1_5_COGS_REPLICATION_RESULTS.md`. It did not replicate; the
+   original result was a layer-selection artifact.**
