@@ -7,7 +7,7 @@ does not show a gain, STP is treated as task-specific.
 from __future__ import annotations
 from dataclasses import dataclass
 
-from config import TrainConfig
+from lattice.config import TrainConfig
 
 
 @dataclass

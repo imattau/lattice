@@ -10,13 +10,13 @@ import argparse
 
 import torch
 
-from config import (
+from lattice.config import (
     DataTier, LossWeights, ModelConfig, Objective, TrainConfig,
 )
-from data import build_dataloader
-from paired import run_paired
-from scaling import choose_scaling_model
-from representation_probe import LinearProbeSuite
+from lattice.data import build_dataloader
+from lattice.paired import run_paired
+from lattice.scaling import choose_scaling_model
+from lattice.representation_probe import LinearProbeSuite
 
 
 def parse_args():

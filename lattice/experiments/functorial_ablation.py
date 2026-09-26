@@ -6,8 +6,8 @@ loss is active. Compares on compositional generalization benchmarks.
 from __future__ import annotations
 import copy
 
-from config import TrainConfig
-from trainer import train
+from lattice.config import TrainConfig
+from lattice.trainer import train
 
 
 def run_ablation(base_cfg: TrainConfig, dataloader, device='cpu'):
@@ -16,7 +16,7 @@ def run_ablation(base_cfg: TrainConfig, dataloader, device='cpu'):
     cfg_off = copy.deepcopy(base_cfg)
     cfg_off.enable_functorial = False
 
-    from models import JEPACore
+    from lattice.models import JEPACore
     core_on = JEPACore(cfg_on.model)
     core_off = JEPACore(cfg_off.model)
 

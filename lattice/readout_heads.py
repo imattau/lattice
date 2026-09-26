@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from interfaces import DecisionType, ReadoutOutput
+from lattice.interfaces import DecisionType, ReadoutOutput
 
 
 class ReadoutHead(nn.Module):

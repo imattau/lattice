@@ -11,9 +11,9 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from config import ModelConfig, TrainConfig
-from models import ARBaseline, JEPACore, count_parameters, estimate_flops_per_step
-from trainer import train
+from lattice.config import ModelConfig, TrainConfig
+from lattice.models import ARBaseline, JEPACore, count_parameters, estimate_flops_per_step
+from lattice.trainer import train
 
 
 @dataclass

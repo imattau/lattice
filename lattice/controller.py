@@ -8,11 +8,11 @@ from dataclasses import dataclass
 
 import torch
 
-from interfaces import (
+from lattice.interfaces import (
     ConstraintResult, DecisionType, ProposedAction,
     ReadoutOutput, Stakes, Verdict,
 )
-from constraint_layer import ConstraintLayer
+from lattice.constraint_layer import ConstraintLayer
 
 
 @dataclass

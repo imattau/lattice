@@ -13,9 +13,9 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from config import TrainConfig
-from models import JEPACore
-from objectives import (
+from lattice.config import TrainConfig
+from lattice.models import JEPACore
+from lattice.objectives import (
     MonoidalCompose, combined_objective, functorial_consistency_loss,
     jepa_loss, mlm_loss, next_latent_loss, stp_regularizer,
 )

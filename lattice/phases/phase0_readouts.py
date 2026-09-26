@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from calibration import (
+from lattice.calibration import (
     expected_calibration_error, fit_temperature, rlcd_surrogate,
 )
 

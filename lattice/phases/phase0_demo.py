@@ -7,11 +7,11 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from ..interfaces import DecisionType, Stakes
-from ..readout_heads import ReadoutBank
-from ..constraint_layer import ConstraintLayer, default_policy
-from ..controller import Controller, ControllerConfig
-from ..calibration import expected_calibration_error, fit_temperature
+from lattice.interfaces import DecisionType, Stakes
+from lattice.readout_heads import ReadoutBank
+from lattice.constraint_layer import ConstraintLayer, default_policy
+from lattice.controller import Controller, ControllerConfig
+from lattice.calibration import expected_calibration_error, fit_temperature
 
 
 def main() -> None:

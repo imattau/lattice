@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from config import LossWeights
+from lattice.config import LossWeights
 
 
 def jepa_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:

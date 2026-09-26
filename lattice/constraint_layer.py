@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass
 from typing import Callable
 
-from interfaces import (
+from lattice.interfaces import (
     ConstraintResult, ProposedAction, Stakes, Verdict,
 )
 

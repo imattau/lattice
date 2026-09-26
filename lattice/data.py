@@ -7,7 +7,7 @@ import random
 import torch
 from torch.utils.data import Dataset
 
-from config import DataTier
+from lattice.config import DataTier
 
 
 @dataclass
