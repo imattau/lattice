@@ -52,3 +52,7 @@ def fit_temperature(logits: torch.Tensor, labels: torch.Tensor,
 
     opt.step(closure)
     return torch.exp(log_T).item()
+
+
+# Backwards-compatible alias used by component reference code.
+rlcd_loss = rlcd_surrogate

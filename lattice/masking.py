@@ -1,8 +1,8 @@
-"""Multi-block masking for JEPA. Spec §3.1.
+'''Multi-block masking for JEPA. Spec §3.1.
 
 Block scale sampled uniformly from [0.15, 0.20]; aspect ratio from
 [0.75, 1.50]. Adapted from vision JEPA to 1-D sequence.
-"""
+'''
 from __future__ import annotations
 import math
 import random
@@ -18,8 +18,9 @@ def sample_block(
     aspect_max: float = 1.50,
     rng: random.Random | None = None,
 ) -> tuple[int, int]:
-    """Sample one contiguous block (start, length)."""
-    rng = rng or random
+    '''Sample one contiguous block (start, length).'''
+    if rng is None:
+        rng = random.Random()
     scale = rng.uniform(scale_min, scale_max)
     aspect = rng.uniform(aspect_min, aspect_max)
     # For 1-D, block length ~ sqrt(scale * seq_len^2 * aspect)
@@ -34,10 +35,11 @@ def multi_block_mask(
     seq_len: int,
     num_blocks: int = 4,
     rng: random.Random | None = None,
-    device: torch.device | str = "cpu",
+    device: torch.device | str = 'cpu',
 ) -> torch.Tensor:
-    """Return a boolean mask [B, seq_len]; True = masked (target)."""
-    rng = rng or random
+    '''Return a boolean mask [B, seq_len]; True = masked (target).'''
+    if rng is None:
+        rng = random.Random()
     mask = torch.zeros(batch_size, seq_len, dtype=torch.bool, device=device)
     for b in range(batch_size):
         for _ in range(num_blocks):

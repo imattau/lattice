@@ -1,8 +1,8 @@
-"""Typed probabilistic readout heads. Spec §3.3.
+'''Typed probabilistic readout heads. Spec §3.3.
 
 Each head is a thin module over a shared representation. It outputs a
 bounded, calibrated distribution over a declared option set.
-"""
+'''
 from __future__ import annotations
 import torch
 import torch.nn as nn
@@ -12,14 +12,14 @@ from interfaces import DecisionType, ReadoutOutput
 
 
 class ReadoutHead(nn.Module):
-    """One typed decision head.
+    '''One typed decision head.
 
     Args:
         hidden_dim: shared representation dimension.
         num_options: bounded output space (<= 255 per spec).
         decision_type: declared type.
         rationale_dim: optional rationale vector dimension (auditing aid only).
-    """
+    '''
 
     def __init__(
         self,
@@ -30,7 +30,7 @@ class ReadoutHead(nn.Module):
         init_temperature: float = 1.0,
     ):
         super().__init__()
-        assert num_options <= 255, "Spec caps option space at 255"
+        assert num_options <= 255, 'Spec caps option space at 255'
         self.hidden_dim = hidden_dim
         self.num_options = num_options
         self.decision_type = decision_type
@@ -48,12 +48,12 @@ class ReadoutHead(nn.Module):
         )
 
     def forward(self, pooled_state: torch.Tensor) -> ReadoutOutput:
-        """
+        '''
         Args:
             pooled_state: [B, hidden_dim]
         Returns:
             ReadoutOutput with calibrated distribution.
-        """
+        '''
         logits = self.logit_head(pooled_state)          # [B, C]
         temperature = torch.exp(self.log_temperature).clamp(min=1e-3)
         scaled = logits / temperature
@@ -78,7 +78,7 @@ class ReadoutHead(nn.Module):
 
 
 class ReadoutBank(nn.Module):
-    """A bank of readout heads sharing one representation. Spec §3.3."""
+    '''A bank of readout heads sharing one representation. Spec §3.3.'''
 
     def __init__(self, hidden_dim: int, specs: dict[DecisionType, int],
                  rationale_dim: int = 0):

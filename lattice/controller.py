@@ -1,8 +1,8 @@
-"""Deterministic controller. Spec §3.4.
+'''Deterministic controller. Spec §3.4.
 
 Routing, thresholds, escalation. Consumes typed readouts; emits actions.
 Never parses prose.
-"""
+'''
 from __future__ import annotations
 from dataclasses import dataclass
 
@@ -26,7 +26,7 @@ class ControllerConfig:
 
 
 class Controller:
-    """Deterministic control path. Spec §3.4, §4.4–4.6."""
+    '''Deterministic control path. Spec §3.4, §4.4–4.6.'''
 
     def __init__(self, config: ControllerConfig, constraints: ConstraintLayer):
         self.config = config
@@ -37,17 +37,17 @@ class Controller:
         readouts: dict[DecisionType, ReadoutOutput],
         stakes: Stakes,
     ) -> tuple[ProposedAction, ConstraintResult]:
-        """Convert typed readouts into a proposed action, then constraint-check."""
+        '''Convert typed readouts into a proposed action, then constraint-check.'''
         urgency = readouts.get(DecisionType.URGENCY)
         routing = readouts.get(DecisionType.ROUTING)
 
-        action_type = "route"
+        action_type = 'route'
         parameters: dict = {}
 
         if routing is not None:
             params = routing.distribution.mean(dim=0)
             department = int(params.argmax().item())
-            parameters["department"] = f"dept_{department}"
+            parameters['department'] = f'dept_{department}'
             routing_conf = float(routing.confidence.mean())
         else:
             routing_conf = 0.0
@@ -56,7 +56,7 @@ class Controller:
         conf = float(urgency.confidence.mean()) if urgency else routing_conf
         if (stakes == Stakes.HIGH
                 and conf < self.config.escalation_confidence_threshold):
-            action_type = "escalate"
+            action_type = 'escalate'
 
         proposal = ProposedAction(
             action_type=action_type,
@@ -68,10 +68,10 @@ class Controller:
         )
         result = self.constraints.evaluate(proposal)
 
-        if result.verdict == Verdict.REJECT and action_type != "escalate":
+        if result.verdict == Verdict.REJECT and action_type != 'escalate':
             # Deterministic fallback: escalate on rejection.
             fallback = ProposedAction(
-                action_type="escalate",
+                action_type='escalate',
                 parameters={},
                 decision_type=DecisionType.ESCALATION,
                 distribution=torch.zeros(1),
@@ -84,6 +84,6 @@ class Controller:
         return proposal, result
 
     def should_generate(self, readout: ReadoutOutput) -> bool:
-        """Spec §9.2 — generation invoked on < 20% of inputs."""
+        '''Spec §9.2 — generation invoked on < 20% of inputs.'''
         return float(readout.confidence.mean()) >= \
             self.config.generation_confidence_threshold

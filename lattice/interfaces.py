@@ -1,4 +1,4 @@
-"""Typed interfaces between Lattice components. Spec §4."""
+'''Typed interfaces between Lattice components. Spec §4.'''
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
@@ -7,27 +7,27 @@ import torch
 
 
 class DecisionType(str, Enum):
-    ROUTING = "routing"
-    URGENCY = "urgency"
-    ESCALATION = "escalation"
-    RELEVANCE = "relevance"
+    ROUTING = 'routing'
+    URGENCY = 'urgency'
+    ESCALATION = 'escalation'
+    RELEVANCE = 'relevance'
 
 
 class Verdict(str, Enum):
-    APPROVE = "approve"
-    REJECT = "reject"
-    MODIFY = "modify"
+    APPROVE = 'approve'
+    REJECT = 'reject'
+    MODIFY = 'modify'
 
 
 class Stakes(str, Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
+    LOW = 'low'
+    MEDIUM = 'medium'
+    HIGH = 'high'
 
 
 @dataclass
 class EncoderOutput:
-    """Spec §4.1 — Encoder → Reasoner."""
+    '''Spec §4.1 — Encoder → Reasoner.'''
     latent_state: torch.Tensor          # [B, hidden_dim]
     attention_mask: torch.Tensor        # [B, seq_len] bool
     metadata: dict = field(default_factory=dict)
@@ -35,7 +35,7 @@ class EncoderOutput:
 
 @dataclass
 class ReadoutOutput:
-    """Spec §4.3 — Readout Head → Controller."""
+    '''Spec §4.3 — Readout Head → Controller.'''
     decision_type: DecisionType
     distribution: torch.Tensor          # [B, num_options], sums to 1
     confidence: torch.Tensor            # [B], in [0, 1]
@@ -46,7 +46,7 @@ class ReadoutOutput:
 
 @dataclass
 class ProposedAction:
-    """Spec §4.4 — Controller → Constraint Layer."""
+    '''Spec §4.4 — Controller → Constraint Layer.'''
     action_type: str
     parameters: dict
     decision_type: DecisionType
@@ -57,16 +57,16 @@ class ProposedAction:
 
 @dataclass
 class ConstraintResult:
-    """Spec §4.5 — Constraint Layer → Controller."""
+    '''Spec §4.5 — Constraint Layer → Controller.'''
     verdict: Verdict
     modified_action: Optional[ProposedAction] = None
     trace: list = field(default_factory=list)
-    policy_hash: str = ""
+    policy_hash: str = ''
 
 
 @dataclass
 class GenerationRequest:
-    """Spec §4.6 — Controller → Talker."""
+    '''Spec §4.6 — Controller → Talker.'''
     task: str                           # draft_response | summarize | explain
     latent_context: torch.Tensor        # [B, seq_len, hidden_dim]
     style: dict = field(default_factory=dict)
