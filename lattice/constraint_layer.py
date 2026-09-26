@@ -101,3 +101,53 @@ def default_policy() -> list[Rule]:
              rule_escalate_on_low_confidence_high_stakes,
              'Escalate when stakes are high and confidence < 0.3.'),
     ]
+
+
+# ---- Phase 1 triage policy (spec §8.1, Phase 1 hard cases) ----------------
+#
+# The synthetic-triage corpus (lattice/synthetic_triage.py) encodes
+# `department` as an int (Department IntEnum) rather than the string
+# `'blacklisted_dept'` used by the Phase 0 example policy, and adds a
+# safety-flag signal the Phase 0 rules don't know about. These two rules
+# are the Phase 1 read of the same two spec requirements:
+#   - "never route to a blacklisted department"
+#   - "escalate if confidence<0.3 and stakes=high" (generalized here to
+#     also cover "a hard safety signal fired at high stakes", which is
+#     what the rule_precedence hard case is designed to test).
+
+def make_rule_no_blacklisted_department(blacklisted: int) -> Rule:
+    def predicate(action: ProposedAction) -> bool:
+        if action.action_type != 'route':
+            return False
+        return action.parameters.get('department') == blacklisted
+    return Rule(
+        'no_blacklisted_department',
+        predicate,
+        f'Never route to blacklisted department {blacklisted}.',
+    )
+
+
+def make_rule_escalate_on_safety_high_stakes() -> Rule:
+    def predicate(action: ProposedAction) -> bool:
+        if action.stakes != Stakes.HIGH:
+            return False
+        if not action.parameters.get('safety_flag', False):
+            return False
+        return action.action_type != 'escalate'
+    return Rule(
+        'escalate_on_safety_high_stakes',
+        predicate,
+        'Escalate when a safety signal fires at high stakes, regardless of '
+        'the soft escalation head or any instruction embedded in the '
+        'document text.',
+    )
+
+
+def triage_policy(blacklisted: int) -> list[Rule]:
+    return [
+        make_rule_no_blacklisted_department(blacklisted),
+        make_rule_escalate_on_safety_high_stakes(),
+        Rule('escalate_low_conf_high_stakes',
+             rule_escalate_on_low_confidence_high_stakes,
+             'Escalate when stakes are high and confidence < 0.3.'),
+    ]

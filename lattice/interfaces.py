@@ -11,6 +11,7 @@ class DecisionType(str, Enum):
     URGENCY = 'urgency'
     ESCALATION = 'escalation'
     RELEVANCE = 'relevance'
+    SAFETY = 'safety'
 
 
 class Verdict(str, Enum):

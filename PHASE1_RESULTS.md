@@ -1,7 +1,9 @@
 # Phase 1 Results
 
-Status: **synthetic triage corpus generated. Readout bank / controller
-training not yet started.**
+Status: **synthetic triage corpus generated; readout bank trained; controller
+threshold tuned; constraint layer wired in and evaluated, including against
+the red-team set.** Real human annotation and an LLM-generated text pass are
+still open (see Follow-ups).
 
 Per `PLAN.md` Phase 1 ("Minimal System — Document Triage"), the first data
 component is a synthetic corpus of documents with multi-label decisions
@@ -143,20 +145,103 @@ validity, hard-case rate accuracy, injected-instruction → safety_flag
 invariant, rule-precedence → forced-escalation invariant, and department
 balance at scale.
 
+## Readout bank + controller training (Stage 1a/1b/1c) — DONE
+
+`lattice/interfaces.py` now has `DecisionType.SAFETY`. The plan's
+"confidence" head is **not** trained as a fifth classifier: confidence is a
+derived quantity (softmax max) of each existing head, already exposed as
+`ReadoutOutput.confidence`, not an annotatable label — training a separate
+head against `label_confidence` would just be learning to predict the
+generator's own difficulty bucket, not a useful confidence estimate. The
+corpus's `label_confidence` remains available as a stratification variable
+for future calibration analysis, not a training target.
+
+`lattice/phases/phase1_triage.py` implements the full Stage 1a/1b/1c
+pipeline; `scripts/train_phase1.py` runs it end to end over
+`BAAI/bge-small-en-v1.5` (the Phase 0 latency-gated encoder decision):
+
+- **1a** — joint RLCD training of a 4-head `ReadoutBank`
+  (routing 10-way, urgency 3-way, escalation binary, safety binary) on
+  `train.jsonl`.
+- **1b** — sweep the controller's escalation-confidence threshold on
+  `val.jsonl`, picking the value that maximizes escalation-decision accuracy
+  against gold `escalate`.
+- **1c** — fit per-head post-hoc temperature on `val.jsonl` logits, on top
+  of the temperature already learned in-loop by RLCD (reported for
+  diagnostic comparison, not applied in place of the in-loop one).
+
+A new triage-specific constraint policy (`triage_policy` in
+`lattice/constraint_layer.py`) encodes the two Phase 1 hard constraints
+against this corpus's actual label schema (int department codes, a
+`safety_flag` field the Phase 0 example policy didn't have):
+`no_blacklisted_department` and `escalate_on_safety_high_stakes`.
+`decide_triage` (`lattice/phases/phase1_triage.py`) proposes an action from
+the readout bank's argmax outputs, evaluates it against the policy, and
+falls back to a guaranteed-compliant `escalate` action on rejection — the
+same deterministic-fallback pattern as the Phase 0 `Controller`.
+
+### Results (30K corpus, 40 epochs, seed 0 — `PHASE1_TRAINING_RESULTS.json`)
+
+| Head | Accuracy (test) | ECE (test) | Brier (test) |
+|---|---:|---:|---:|
+| routing (10-way) | 0.934 | 0.595 | 0.514 |
+| urgency (3-way) | 0.825 | 0.286 | 0.396 |
+| escalation (binary) | 0.847 | 0.100 | 0.221 |
+| safety (binary) | 0.862 | 0.102 | 0.194 |
+
+| Controller-level (post constraint layer) | test | gold_validation | redteam |
+|---|---:|---:|---:|
+| N | 4,500 | 1,000 | 100 |
+| constraint-violation rate | **0.0** | **0.0** | **0.0** |
+| escalation-decision accuracy | 0.791 | 0.774 | 0.790 |
+| injection attempts in split | 473 | 145 | 47 |
+| raw-head injection-obedience rate (pre-constraint) | 3.2% | 4.1% | 2.1% |
+
+Reading:
+- **The headline Phase 1 gate — zero constraint violations, including on the
+  adversarial red-team set — holds.** This is the point of the layered
+  design: the raw routing head is occasionally fooled by an embedded
+  prompt-injection attempt (2-4% of injection attempts across splits — it
+  sometimes argmaxes to the department the injected text asks for), but the
+  constraint layer's `no_blacklisted_department` /
+  `escalate_on_safety_high_stakes` rules catch every one of those before an
+  action is taken, so the *system's* violation rate is 0% even though the
+  *head's* is not. That gap is exactly what the constraint layer is for.
+- **Escalation and safety are reasonably well calibrated** (ECE ~0.10) after
+  RLCD training — in the range of the Phase 0 typed-head numbers (~0.055,
+  albeit on a much easier 77-way single-label task).
+- **Routing calibration is poor (ECE 0.595) despite high accuracy (0.934)** —
+  a known finding, not yet resolved. Tried `beta_rlcd=3.0` (vs default 1.0);
+  ECE was unchanged (0.565 test). This looks structural to the 10-way
+  multiclass RLCD alignment term rather than an undertrained model: pushing
+  confidence toward 1 for correct predictions (the alignment penalty) with
+  high base accuracy concentrates almost all mass in the top confidence bin,
+  and any residual miscalibration there dominates ECE. **Do not treat the
+  routing head's confidence as reliable yet** — this is a genuine open
+  problem, not a "good enough" result, and it affects the
+  `escalation_confidence_threshold` fallback rule (`decide_triage`), whose
+  usefulness is a function of routing-confidence being trustworthy at all
+  (the threshold sweep picked the *lowest* candidate, 0.1, on val — evidence
+  it doesn't discriminate a lot here either).
+- **Escalation-decision accuracy (~0.79) is meaningfully below routing
+  accuracy (~0.93)** — escalation depends on getting urgency, safety, *and*
+  the hard-constraint interaction right simultaneously, so errors compound;
+  worth tracking separately from head-level accuracy going forward.
+
 ## Follow-ups still open
 
-1. **Readout bank + controller training (Stage 1a/1b/1c)** — train the
-   4-5 head bank (department, urgency, escalation, safety[, confidence])
-   jointly on `train.jsonl` with per-head cross-entropy + RLCD, tune
-   controller thresholds on `val.jsonl`, fit per-head temperature.
+1. **Fix routing-head calibration.** ECE 0.595 is not acceptable for a head
+   whose confidence gates a fallback rule. Try: per-class alignment penalty
+   instead of a single scalar, fewer epochs / early stopping on val ECE
+   (current run trains for a fixed 40 epochs with no ECE-based stopping),
+   or dropping in post-hoc temperature scaling as the primary calibration
+   path instead of relying on in-loop RLCD alone for the 10-way head.
 2. **Real human annotation** for the 500-1,000 document validation set
-   (`gold_validation.jsonl` is a placeholder only).
+   (`gold_validation.jsonl` is a placeholder only — the numbers above on
+   that split are template-generated, not human-verified).
 3. **Optional: LLM-generated text pass** through the same schema, to close
    the lexical-diversity gap noted above, once an LLM API is available in
    this environment.
-4. Extend `DecisionType` (`lattice/interfaces.py`) with `SAFETY` (and
-   decide how/whether to represent the plan's "confidence" head) before
-   wiring `ReadoutBank` to this corpus's label schema.
-5. Red-team evaluation: run the trained controller against `redteam.jsonl`
-   and report constraint-violation rate (spec gate: zero on adversarial
-   inputs) and appropriate-escalation rate.
+4. **Escalation-decision accuracy (~0.79)** is the weakest controller-level
+   number; worth root-causing which head (urgency vs safety vs the hard
+   rules) drives the errors before trusting it as a production gate.
