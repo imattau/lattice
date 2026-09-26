@@ -6,9 +6,9 @@ from lattice.phases.phase1_5_toy import (
     build_ar_jepa, build_composition_task, build_cogs_style_task,
     build_cogs_style_task_v2, build_contrastive, build_deep_composition_task,
     build_jepa, composition_accuracy, effective_rank, encode_pooled_ar,
-    encode_pooled_contrastive, encode_pooled_jepa, info_nce_loss,
-    linear_probe_accuracy, make_augmented_view, make_block_mask, train_ar,
-    train_ar_jepa, train_contrastive, train_jepa, uniformity,
+    encode_pooled_contrastive, encode_pooled_jepa, finetune_composition_accuracy,
+    info_nce_loss, linear_probe_accuracy, make_augmented_view, make_block_mask,
+    train_ar, train_ar_jepa, train_contrastive, train_jepa, uniformity,
 )
 from lattice.tiny_transformer import (
     ARLanguageModel, Predictor, TinyTransformer, ema_update, tau_schedule,
@@ -385,3 +385,31 @@ def test_uniformity_and_effective_rank_run():
     r = effective_rank(z)
     assert isinstance(u, float)
     assert 1.0 <= r <= 8.0
+
+
+def test_finetune_composition_accuracy_fits_training_set():
+    torch.manual_seed(0)
+    tok = CharTokenizer.fit(['the red circle is on the table a blue square '
+                             'this green triangle that yellow star'])
+    split = build_composition_task(tok, max_len=32)
+    backbone = TinyTransformer(tok.vocab_size, dim=16, n_layers=2, n_heads=2,
+                               max_len=32)
+    result = finetune_composition_accuracy(backbone, split, causal=False,
+                                           epochs=50, lr=1e-2, device='cpu')
+    assert set(result) == {'train', 'test', 'loss_history_every_20'}
+    assert result['train']['joint_accuracy'] > 0.5
+    assert 0.0 <= result['test']['joint_accuracy'] <= 1.0
+
+
+def test_finetune_composition_accuracy_does_not_mutate_input_backbone():
+    torch.manual_seed(0)
+    tok = CharTokenizer.fit(['the red circle is on the table a blue square '
+                             'this green triangle that yellow star'])
+    split = build_composition_task(tok, max_len=32)
+    backbone = TinyTransformer(tok.vocab_size, dim=16, n_layers=2, n_heads=2,
+                               max_len=32)
+    before = next(backbone.parameters()).clone()
+    finetune_composition_accuracy(backbone, split, causal=False, epochs=5,
+                                  lr=1e-2, device='cpu')
+    after = next(backbone.parameters())
+    assert torch.equal(before, after)

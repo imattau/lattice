@@ -776,3 +776,86 @@ def effective_rank(z: torch.Tensor) -> float:
     p = p[p > 1e-12]
     entropy = -(p * torch.log(p)).sum()
     return torch.exp(entropy).item()
+
+
+# ---- Fine-tuned (not frozen) evaluation ------------------------------------
+#
+# Every probe above freezes the encoder and trains only a linear head --
+# deliberately conservative (the spec's "linear probe on a frozen Core" is
+# the intended Phase 1/1.5 protocol), but it answers a narrower question
+# than "can this objective's representation support the task at all": a
+# frozen probe can only recover what's already linearly decodable. This
+# answers the complementary question -- given direct gradient signal on the
+# task itself, how learnable is it from these starting weights -- which is
+# a different, useful thing to know regardless of what the frozen probe
+# showed (per the split-question and COGS-replication follow-ups).
+
+class _TwoAttributeHead(torch.nn.Module):
+    def __init__(self, dim: int, n_a: int, n_b: int):
+        super().__init__()
+        self.head_a = torch.nn.Linear(dim, n_a)
+        self.head_b = torch.nn.Linear(dim, n_b)
+
+    def forward(self, pooled: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.head_a(pooled), self.head_b(pooled)
+
+
+def finetune_composition_accuracy(
+    backbone: TinyTransformer, split: CompositionSplit, causal: bool,
+    epochs: int = 500, lr: float = 1e-4, device: str = 'cpu',
+) -> dict:
+    '''Unfreezes a copy of `backbone` (the loaded checkpoint is left
+    untouched) and trains it end-to-end, jointly with a small two-head
+    classifier, directly on `split`'s train examples -- full-batch AdamW,
+    the whole training set fits in one batch at this scale. Reports both
+    train and test accuracy so overfitting (high train, low test) is
+    visible rather than silently conflated with genuine learning.
+    '''
+    import copy
+    model = copy.deepcopy(backbone).to(device)
+    for p in model.parameters():
+        p.requires_grad = True
+    model.train()
+
+    n_a = int(torch.cat([split.train_color, split.test_color]).max()) + 1
+    n_b = int(torch.cat([split.train_shape, split.test_shape]).max()) + 1
+    head = _TwoAttributeHead(model.dim, n_a, n_b).to(device)
+    head.train()
+
+    opt = torch.optim.AdamW(list(model.parameters()) + list(head.parameters()),
+                            lr=lr)
+    train_tokens = split.train_tokens.to(device)
+    train_a = split.train_color.to(device)
+    train_b = split.train_shape.to(device)
+
+    loss_history = []
+    for epoch in range(epochs):
+        pooled = model(train_tokens, causal=causal).mean(dim=1)
+        logits_a, logits_b = head(pooled)
+        loss = (F.cross_entropy(logits_a, train_a)
+               + F.cross_entropy(logits_b, train_b))
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        loss_history.append(float(loss.item()))
+
+    def _eval(tokens, labels_a, labels_b):
+        model.eval()
+        head.eval()
+        with torch.no_grad():
+            pooled = model(tokens.to(device), causal=causal).mean(dim=1)
+            pred_a, pred_b = head(pooled)
+            pred_a, pred_b = pred_a.argmax(-1).cpu(), pred_b.argmax(-1).cpu()
+        model.train()
+        head.train()
+        acc_a = (pred_a == labels_a).float().mean().item()
+        acc_b = (pred_b == labels_b).float().mean().item()
+        joint = ((pred_a == labels_a) & (pred_b == labels_b)).float().mean().item()
+        return {'color_accuracy': acc_a, 'shape_accuracy': acc_b,
+                'joint_accuracy': joint}
+
+    return {
+        'train': _eval(split.train_tokens, split.train_color, split.train_shape),
+        'test': _eval(split.test_tokens, split.test_color, split.test_shape),
+        'loss_history_every_20': loss_history[::20],
+    }

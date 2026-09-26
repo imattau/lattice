@@ -108,11 +108,14 @@ rather than a comparable, deployable read.
 
 ## Follow-ups
 
-1. Given JEPA has no surviving compositional-generalization win, the
-   fine-tuned-probe experiment (from the earlier split-question review) is
-   now more interesting to run on AR+JEPA-auxiliary specifically than on
-   pure JEPA — it's the arm with an actual positive signal worth
-   understanding further.
+1. ~~Given JEPA has no surviving compositional-generalization win, the
+   fine-tuned-probe experiment... is now more interesting to run on
+   AR+JEPA-auxiliary specifically than on pure JEPA.~~ **Done — see
+   `PHASE1_5_FINETUNE_INDIRECTION_RESULTS.md`. Both AR+JEPA-aux and AR
+   overfit identically (train 1.000, test at or below chance) — the
+   experiment didn't distinguish them; it revealed a shared
+   data-scarcity/overfitting limitation of full fine-tuning on 192
+   examples, not a property of either objective.**
 2. The harder indirection task (genuine "no single token predicts the
    answer," primitives in corpus) remains the load-bearing unresolved
    experiment for the design's central bet. Nothing in this follow-up

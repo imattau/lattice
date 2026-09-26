@@ -178,13 +178,12 @@ included, regardless of whether that ability exists.
    with a frozen probe, so a floor result can no longer be blamed on zero
    exposure to the task type at all. This is now the most likely candidate
    fix, having ruled out (1).
-3. **Fine-tune rather than frozen-probe** on the deep task, to separate
-   "does the frozen representation already linearly contain the answer"
-   from "can this architecture learn the relationship given more direct
-   training signal" — the frozen-probe design used throughout Phase 1.5
-   is deliberately conservative (spec's "linear probe on a frozen Core" is
-   exactly the intended evaluation protocol), but for a task with zero
-   pretraining exposure by construction, it may simply be the wrong tool.
+3. ~~Fine-tune rather than frozen-probe on the deep task~~ — **done, see
+   `PHASE1_5_FINETUNE_INDIRECTION_RESULTS.md`. Result: overfitting, not
+   learning — both AR and AR+JEPA-aux reach perfect train accuracy and
+   chance-or-worse test accuracy. This is a third inconclusive outcome for
+   a different reason (data scarcity relative to the task's combinatorial
+   structure), not a resolution.**
 4. **More training examples** (currently 192) — 2-hop indirection with a
    4x4 permutation space is a combinatorially richer rule than the shallow
    task's direct lexical mapping; it may need more than 12 pairings x 16
