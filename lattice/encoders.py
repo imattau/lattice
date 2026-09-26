@@ -21,7 +21,11 @@ class FrozenEncoder:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModel.from_pretrained(model_name).to(self.device).eval()
+        # CPU runs benefit from fp32 (bf16 is slow on CPU and breaks int8).
+        dtype = torch.float32 if str(self.device).startswith('cpu') else None
+        self.model = AutoModel.from_pretrained(
+            model_name, **({'dtype': dtype} if dtype is not None else {}),
+        ).to(self.device).eval()
         for p in self.model.parameters():
             p.requires_grad = False
         self.hidden_dim = self.model.config.hidden_size

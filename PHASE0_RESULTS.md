@@ -1,10 +1,10 @@
 # Phase 0 Results
 
-Status: **encoder decision resolved; generative baseline preliminary.**
+Status: **Phase 0 complete** — encoder decision resolved (latency-gated); generative baseline done. Ready for Phase 1.
 
-This document records the empirical results that gate Phase 1, per the
-order recommended in `PLAN_REVISION.md` / `PLAN.md`: reproducibility first,
-then a three-encoder comparison, then a generative baseline.
+Per the order recommended in `PLAN_REVISION.md`: reproducibility, then a
+latency-gated encoder comparison, then a fair generative baseline. This
+document tracks the empirical results that gate Phase 1.
 
 ## Reproducibility
 
@@ -12,80 +12,99 @@ then a three-encoder comparison, then a generative baseline.
   reuses the CUDA-13 torch build that produced these numbers).
 - Pinned versions captured in `requirements.lock` (torch 2.13.0+cu130,
   transformers 5.13.0, datasets 4.8.5, tokenizers 0.22.2, ...).
-- Dataset: BANKING77 (`PolyAI`), loaded from `data/banking77.csv` (the
-  installed `datasets==4.8.5` refuses loading-script datasets, so we ship a
-  CSV loader). Download URL is printed by `load_banking77` on miss.
+- Dataset: BANKING77, loaded from `data/banking77.csv` (the installed
+  `datasets==4.8.5` refuses loading-script datasets, so we ship a CSV loader).
+  `load_banking77` prints the download URL on miss.
 
-## Headline: the 0.62 was encoder-limited
+## Encoder comparison — gated by BOTH accuracy and CPU latency
 
-Same readout head, same splits, same RLCD + post-hoc temperature; only the
-frozen encoder changes (30 epochs, lr 3e-3, RLCD beta 1.0). Latency is the
-typed readout head forward only (GPU), not end-to-end.
+Same readout head, same splits, same RLCD + post-hoc temperature (30 epochs,
+lr 3e-3, beta 1.0). Accuracy/calibration measured on GPU; **CPU latency is
+encoder forward + typed head, 4 threads, max_len 64 (BANKING77 queries are
+short), p95 over 150 single-decision calls.** The gate is the spec's Phase 0
+target: **< 50 ms per decision on CPU.**
 
-| Frozen encoder (as feature extractor) | dim | Accuracy | ECE raw | ECE cal | Brier | Brier skill* |
-|---|---:|---:|---:|---:|---:|---:|
-| distilbert-base-uncased | 768 | 0.680 | 0.403 | 0.054 | 0.639 | 0.352 |
-| microsoft/deberta-v3-base | 768 | 0.509 | 0.312 | 0.055 | 0.769 | 0.220 |
-| **Qwen/Qwen3-0.6B** | 1024 | **0.804** | 0.069 | **0.017** | **0.286** | **0.710** |
-
-\* Brier skill vs the class-prior baseline (prior Brier 0.986). Higher is better.
+| Frozen encoder (feature extractor) | dim | params | Acc | ECE cal | CPU p95 | Gate |
+|---|---:|---:|---:|---:|---:|:--:|
+| distilbert-base-uncased | 768 | 66M | 0.680 | 0.054 | 12.9 ms | pass |
+| microsoft/deberta-v3-base | 768 | 149M | 0.509 | 0.055 | n/a | rejected |
+| Qwen/Qwen3-0.6B | 1024 | 600M | 0.804 | 0.017 | 442 ms | **FAIL** |
+| sentence-transformers/all-MiniLM-L6-v2 | 384 | 22M | 0.839 | 0.054 | 4.7 ms | pass |
+| **BAAI/bge-small-en-v1.5** | 384 | 33M | **0.873** | 0.056 | **8.4 ms** (6.1 int8) | **pass** |
 
 Reading:
-- **Qwen3-0.6B used purely as a frozen encoder clears the ≥ 0.75 bar** with
-  accuracy 0.804 and a spectacular post-calibration ECE of 0.017. This is the
-  Phase 0 success to treat as real.
-- DeBERTa-v3-base's low 0.509 is a **mean-pooling artifact** of its base
-  checkpoint (its own pooling is non-standard); it is not evidence that
-  DeBERTa is a weak encoder. Do not draw conclusions from that row.
-- The earlier 0.62 vs 0.680 for DistilBERT is a head-hyperparameter effect
-  (20 vs 30 epochs); some of the gap was head-limited, but the encoder swap
-  dominates.
+- **Qwen3-0.6B wins calibration on GPU but is 10× over the CPU latency gate.**
+  It is not deployable at the spec's per-decision cost target; int8 on CPU does
+  not close a 442 ms → 50 ms gap.
+- **bge-small-en-v1.5 dominates on the two gates that matter together**: highest
+  accuracy (0.873, beating every encoder tried including Qwen3-0.6B) AND CPU
+  p95 of 8.4 ms (int8 6.1 ms) — a ~6× margin under the gate at ~18× fewer
+  params. Calibration after temperature scaling is on par (~0.055).
+- DeBERTa's 0.509 is a **mean-pooling artifact** of its base checkpoint; not a
+  usable row. DistilBERT clears latency but is accuracy-limited (0.68).
 
 ## Decision for Phase 1
 
-Use **frozen Qwen3-0.6B as the shared representation.** The representation is
-now strong enough that the controller's escalation threshold reflects genuine
-uncertainty rather than a weak encoder — so Phase 1 can validate the
-controller/constraint layer without thresholds silently compensating for
-representation quality.
+Use **frozen `BAAI/bge-small-en-v1.5` as the shared representation** for the
+deployable slice. The earlier 0.62/0.68 weakness was encoder-limited; swapping
+representation is free because the readout head, controller, and constraint
+layer are unchanged. (Qwen3-0.6B remains a strong GPU/edge-NPU option where the
+CPU gate does not apply, but it is not the Phase 1 default.)
+
+Open sub-question for Phase 1: whether the deployed head is trained on
+mean-pooled features (as here) or on `[CLS]`/sentence-transformer pooling; the
+head can absorb either, but the generator baseline (#2) uses causal decoding,
+so the interface comparison is representation-agnostic.
 
 ## Latency
 
-- Typed readout head: ~0.04 ms/decision (GPU).
-- **Open item:** the Phase 0 gate is < 50 ms **on CPU, end-to-end** (encoder
-  forward + head). Not yet measured on CPU; DistilBERT is cheap but Qwen3-0.6B
-  on CPU is heavier. This must be measured before claiming the latency gate,
-  and may motivate a smaller or quantized encoder for the deployed slice.
+- Typed readout head alone (GPU): ~0.04 ms/decision.
+- **End-to-end CPU now measured** (see table): bge-small 8.4 ms p95, well inside
+  the < 50 ms gate. Latency gate is **closed** for the chosen encoder.
 
-## Generative baseline (PRELIMINARY — not yet trustworthy)
+## Generative baseline — DONE (task #2)
 
-Per the plan, the baseline is a small local model, not a frontier API. Using
-the same Qwen3-0.6B, classification by 77-way teacher-forced likelihood:
+Fair comparison per the plan: the same-class instruct model (Qwen3-0.6B, the
+model that also tops the encoder comparison on GPU) asked to *generate* an
+intent under **constrained decoding** over the exact 77-label trie — the
+probability of each label is the joint likelihood of its token path plus the
+terminating token, so shared-prefix pairs like `card_arrival` /
+`card_arrival_estimate` are scored correctly by construction instead of
+colliding under raw likelihood. Same test split as Phase 0
+(`scripts/generative_baseline.py`).
 
-- Zero-shot raw cloze: accuracy 0.06 (≈ random).
-- 3-shot format-primed: accuracy ~0.16, ECE(raw) ~0.06.
+| Shots | Acc (exact) | ECE (raw) | Brier | Prefix-collision (of errors) | Latency |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 0.060 | 0.724 | 1.556 | 0.032 | 222 ms/ex |
+| 3 | 0.110 | 0.552 | 1.346 | 0.022 | 527 ms/ex |
+| 5 | 0.150 | 0.525 | 1.247 | 0.006 | 687 ms/ex |
 
-Caveats and why this number is not yet the headline comparison:
-- BANKING77 labels share long prefixes (`card_arrival`, `card_arrival_*`,
-  `transfer_*`), so mean-token likelihood cannot disambiguate — a base model
-  given no vocabulary of options is being asked to hallucinate exact
-  snake_case strings.
-- At 8 shots the current scorer returns a degenerate 0.000 (a long-prefix
-  indexing bug in the scorer), so we do **not** report it.
-- A *fair* generative baseline needs an instruct model + constrained decoding
-  over the exact label set (the JSON-schema protocol in `PLAN.md` §Phase 0).
-  That is a dedicated half-day task, deferred.
+Reading:
+- **Not comparable accuracy.** Even at 5-shot, constrained-decoding Qwen3-0.6B
+  tops out at 0.150 — far below the typed-head numbers on the *same*
+  BANKING77 split (0.680–0.873 depending on encoder, 0.804 for Qwen3-0.6B's
+  own frozen-encoder row). More shots help, but generation is not closing that
+  gap; label choice for a 0.6B model under a chat template is a much harder
+  task than linear readout over its own pooled features.
+- **Calibration is much worse**: ECE 0.525 vs ~0.055 for the typed head after
+  temperature scaling — a ~10x gap, even before accounting for the accuracy
+  difference.
+- **Prefix collision is not the dominant error mode** once decoding is
+  constrained (0.6-3.2% of errors) — confirming the fix does what it's meant
+  to (stop shared-prefix labels from colliding), but it does not rescue
+  overall accuracy, which is capped by the model's ability to pick the right
+  leaf, not by the trie construction.
+- **Latency and cost are much higher**: 222-687 ms/example (77 leaf scorings
+  each) vs 8.4 ms p95 end-to-end for the typed head on CPU — roughly two to
+  three orders of magnitude, even before comparing hardware (this run is GPU;
+  the typed head number is CPU).
 
-What the preliminary result already shows, consistently with the spec thesis
-(P1: decision ≠ generation): on a 77-way structured decision, a tiny learned
-typed head on a frozen representation is far more accurate *and* more
-calibrated than asking the same weights to emit the answer generatively.
+Net: decision-by-generation is worse on every axis Phase 1 cares about
+(accuracy, calibration, latency, cost) than decision-by-readout over the same
+frozen representation. This is the empirical case for typed heads over
+prompted generation that P1 is built on.
 
-## Suggested immediate follow-ups (before Phase 1 build-out)
+## Follow-ups still open
 
-1. Measure **CPU end-to-end** latency of Qwen3-0.6B encoder + head vs a smaller
-   or 4-bit encoder to settle the < 50 ms gate.
-2. Implement the **constrained-decoding generative baseline** properly and
-   re-run to get a trustworthy comparison row.
-3. Add a **fine-tuned BERT reference** (~0.94) as an upper bound so 0.80 from a
-   *frozen* encoder is interpreted correctly.
+1. Phase 1 synthetic triage corpus + multi-head controller with thresholds
+   grounded in the #2 generator result above.
