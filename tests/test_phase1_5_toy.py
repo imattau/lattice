@@ -1,7 +1,8 @@
 import torch
 
 from lattice.phases.phase1_5_toy import (
-    _COLORS, _SHAPES, ToyConfig, build_ar_jepa, build_composition_task,
+    _COGS_DEPARTMENTS, _COGS_HELD_OUT, _COGS_URGENCY, _COLORS, _SHAPES,
+    ToyConfig, build_ar_jepa, build_composition_task, build_cogs_style_task,
     build_contrastive, build_deep_composition_task, build_jepa,
     composition_accuracy, effective_rank, encode_pooled_ar,
     encode_pooled_contrastive, encode_pooled_jepa, info_nce_loss,
@@ -226,6 +227,52 @@ def test_deep_composition_task_style_is_deterministic_per_style():
     b = build_deep_composition_task(tok, max_len=192, n_per_combo=4, seed=0,
                                     style='natural')
     assert torch.equal(a.train_tokens, b.train_tokens)
+
+
+def test_cogs_task_primitives_are_present_in_the_actual_pretraining_corpus():
+    '''The whole point of this task vs. the deep-composition task: its
+    vocabulary must be verifiably present in the real pretraining corpus
+    these checkpoints were trained on, not merely asserted to be.'''
+    corpus_blob = ' '.join(build_pretrain_corpus(seed=0))
+    for dept in _COGS_DEPARTMENTS:
+        assert dept in corpus_blob
+    for phrase in _COGS_URGENCY:
+        assert phrase in corpus_blob
+
+
+def test_cogs_task_holds_out_pairings_but_not_primitives():
+    tok = CharTokenizer.fit(['I have a question about billing. please '
+                             'escalate right away. route this to support.'])
+    split = build_cogs_style_task(tok, max_len=192, n_per_combo=4, seed=0)
+    assert set(split.test_color.tolist()) <= set(split.train_color.tolist())
+    assert set(split.test_shape.tolist()) <= set(split.train_shape.tolist())
+    train_pairs = set(zip(split.train_color.tolist(), split.train_shape.tolist()))
+    test_pairs = set(zip(split.test_color.tolist(), split.test_shape.tolist()))
+    assert train_pairs.isdisjoint(test_pairs)
+    assert test_pairs == _COGS_HELD_OUT
+
+
+def test_cogs_task_is_deterministic():
+    tok = CharTokenizer.fit(['I have a question about billing. please '
+                             'escalate right away. route this to support.'])
+    a = build_cogs_style_task(tok, max_len=192, n_per_combo=4, seed=0)
+    b = build_cogs_style_task(tok, max_len=192, n_per_combo=4, seed=0)
+    assert torch.equal(a.train_tokens, b.train_tokens)
+
+
+def test_composition_accuracy_infers_class_count_from_labels():
+    '''composition_accuracy must not hardcode against _COLORS/_SHAPES --
+    it needs to work for any two-attribute CompositionSplit, e.g. the COGS
+    task's 4 departments x 4 urgency phrases.'''
+    torch.manual_seed(0)
+    tok = CharTokenizer.fit(['I have a question about billing. please '
+                             'escalate right away. route this to support.'])
+    split = build_cogs_style_task(tok, max_len=192, n_per_combo=4, seed=0)
+    train_features = torch.randn(split.train_tokens.size(0), 8)
+    test_features = torch.randn(split.test_tokens.size(0), 8)
+    result = composition_accuracy(train_features, split, test_features,
+                                  epochs=10)
+    assert 0.0 <= result['joint_accuracy'] <= 1.0
 
 
 def test_composition_accuracy_recovers_separable_attributes():

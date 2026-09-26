@@ -1,15 +1,20 @@
 # Phase 1.5 Results: Toy-Scale JEPA vs. AR vs. Contrastive vs. AR+JEPA-Aux
 
-Status: **toy-scale pilot complete with four arms.** Latent-primary
-objectives (JEPA, contrastive) lose to token-level AR, with contrastive
-losing worse than JEPA — a fairly clean signal that the gap is about
-latent-vs-token training in general, not JEPA specifically. The fourth
-arm — AR with the JEPA objective folded in as an auxiliary loss
-("token-primary, latent-auxiliary", the ordering published work like
-LLM-JEPA actually uses) — lands **close to a tie with plain AR overall**:
-matches or slightly beats it on two probes, but underperforms it on the
-compositional-generalization probe specifically. Scope is far below the
-plan's spec (see below) — treat all of this as a pilot that validates the
+Status: **toy-scale pilot complete with four arms; the compositional
+picture below has since been substantially revised — see the "Follow-up:
+does the shallow task's 'AR wins' hold on a fair compositional test?"
+section.** On the probes in this document, latent-primary objectives
+(JEPA, contrastive) lose to token-level AR, with contrastive losing worse
+than JEPA. The fourth arm — AR with the JEPA objective folded in as an
+auxiliary loss ("token-primary, latent-auxiliary") — lands close to a tie
+with plain AR overall. **However, a properly-controlled follow-up
+(`PHASE1_5_COGS_STYLE_RESULTS.md`) found the shallow composition task's
+AR-favoring result depended on a confound (novel vocabulary never seen
+during pretraining), and on a fair test JEPA's best layer actually beats
+AR's.** Read this document's composition numbers with that update in mind
+— contrastive's consistent weakness across every task is the one finding
+that has held up unchanged throughout. Scope is far below the plan's spec
+(see below) — treat all of this as a pilot that validates the
 training/eval pipeline and produces caution signals, not as the actual
 Phase 1.5 decision-gate run.
 
@@ -264,6 +269,32 @@ invariance to input perturbation over token fidelity. Reading from layer 1
 instead of the top layer recovers +0.375 composition-joint-accuracy for
 contrastive and +0.188 for JEPA, but does not close the gap to AR's own
 best layer — a readout pyramid would narrow this gap, not eliminate it.
+(Testing the pyramid directly later found naive concatenation actually
+underperforms the best single layer for JEPA — see
+`PHASE1_5_READOUT_PYRAMID_RESULTS.md`; the per-layer finding stands, "so
+concatenate them" did not.)
+
+## Follow-up: does the shallow task's "AR wins" hold on a fair compositional test?
+
+**Done — see `PHASE1_5_COGS_STYLE_RESULTS.md`, materially updates the
+picture above.** The shallow task's AR-favoring result turned out to
+depend on a confound: color/shape vocabulary never appeared in any arm's
+pretraining corpus, and a two-hop indirection variant built to remove the
+shallow task's lexical shortcut floored at chance for every arm (including
+AR) regardless of textual register
+(`PHASE1_5_DEEP_COMPOSITION_RESULTS.md`) — a separate exposure confound,
+not evidence against any objective. A COGS-style task built from
+vocabulary verified present in the real pretraining corpus (department
+names, urgency phrases from the actual Phase 1 triage documents), with
+only the *pairing* held out, resolves this cleanly: all four arms clear
+chance by a wide margin, and **JEPA's best layer (0.922) outright beats
+AR's best layer (0.859)** — the first result in Phase 1.5 where a
+latent-primary objective beats AR, not merely narrows a gap toward it.
+Contrastive remains the weakest arm throughout. This tempers the earlier
+"AR simply wins on composition" framing considerably: on the
+compositional-generalization property COGS actually measures (novel
+combinations of familiar primitives), JEPA is competitive with, and at
+its best depth ahead of, AR.
 
 ## Follow-ups still open
 

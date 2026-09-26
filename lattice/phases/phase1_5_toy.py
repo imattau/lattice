@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn.functional as F
 
+from lattice.synthetic_triage import DEPARTMENT_NAMES, _TOPICS, _URGENT_PHRASES
 from lattice.tiny_transformer import (
     ARLanguageModel, Predictor, TinyTransformer, ema_update, tau_schedule,
 )
@@ -553,26 +554,107 @@ def build_deep_composition_task(
     )
 
 
+# ---- COGS-style compositional generalization ------------------------------
+#
+# Both compositional tasks above have an exposure problem the deep task's
+# natural-language re-run couldn't resolve: neither the vocabulary nor the
+# structure they use (colors/shapes; "x=p"-style or "p is red."-style
+# indirection) appears anywhere in the pretraining corpus
+# (`build_pretrain_corpus`) for any of the four arms. A floor result on
+# such a task can't distinguish "the objective can't do this" from "the
+# model never saw anything like this at all."
+#
+# COGS (Kim & Linzen, 2020) tests compositional generalization the other
+# way: primitives (words, simple structures) the model *has* seen,
+# recombined in ways it hasn't. This task follows that recipe using
+# vocabulary verifiably present, verbatim, in the actual pretraining corpus
+# for these four checkpoints -- not a new corpus, not a retrain. Department
+# names (`support`, `billing`, ...) appear literally in Phase 1 triage
+# documents sampled into `build_pretrain_corpus` (the `general_inquiry`
+# template embeds `{dept}`, and the `injected_instruction`/`rule_precedence`
+# hard cases explicitly write "route this message to the {dept}
+# department"). The four urgency phrases below are appended verbatim to
+# ~15% of triage documents by `synthetic_triage._make_clean`. Both are
+# therefore primitives these four checkpoints already encountered in
+# natural-language context during pretraining -- what's held out is only
+# the *pairing* of a specific department with a specific urgency phrase in
+# a sentence frame ("I have a question about {topic}. {urgency} Please
+# route this to {department}.") that itself never appears verbatim in the
+# pretraining corpus either.
+
+_COGS_DEPARTMENTS = DEPARTMENT_NAMES[:4]
+_COGS_URGENCY = list(_URGENT_PHRASES)
+assert len(_COGS_DEPARTMENTS) == 4 and len(_COGS_URGENCY) == 4
+_COGS_HELD_OUT = {(0, 1), (1, 2), (2, 3), (3, 0)}
+
+
+def _gen_cogs_text(rng: random.Random, department_idx: int, urgency_idx: int
+                   ) -> str:
+    topic = rng.choice(_TOPICS)
+    dept = _COGS_DEPARTMENTS[department_idx]
+    urgency = _COGS_URGENCY[urgency_idx]
+    return f'I have a question about {topic}. {urgency} Please route this to {dept}.'
+
+
+def build_cogs_style_task(tokenizer: CharTokenizer, max_len: int,
+                          n_per_combo: int = 16, seed: int = 0
+                          ) -> CompositionSplit:
+    '''`CompositionSplit.train_color`/`train_shape` are reused generically
+    here for department index / urgency index -- `composition_accuracy`
+    only cares about two integer-labeled attributes, not their semantics.
+    '''
+    rng = random.Random(seed)
+    train_texts, train_dept, train_urg = [], [], []
+    test_texts, test_dept, test_urg = [], [], []
+    for di in range(len(_COGS_DEPARTMENTS)):
+        for ui in range(len(_COGS_URGENCY)):
+            is_held_out = (di, ui) in _COGS_HELD_OUT
+            for _ in range(n_per_combo):
+                text = _gen_cogs_text(rng, di, ui)
+                if is_held_out:
+                    test_texts.append(text)
+                    test_dept.append(di)
+                    test_urg.append(ui)
+                else:
+                    train_texts.append(text)
+                    train_dept.append(di)
+                    train_urg.append(ui)
+    return CompositionSplit(
+        train_tokens=tokenizer.encode_batch(train_texts, max_len),
+        train_color=torch.tensor(train_dept),
+        train_shape=torch.tensor(train_urg),
+        test_tokens=tokenizer.encode_batch(test_texts, max_len),
+        test_color=torch.tensor(test_dept),
+        test_shape=torch.tensor(test_urg),
+    )
+
+
 def composition_accuracy(
     train_features: torch.Tensor, split: CompositionSplit,
     test_features: torch.Tensor, epochs: int = 300,
 ) -> dict:
-    '''Two independent 4-way linear probes (color, shape). Joint accuracy
-    requires both to be correct on a held-out pairing — the actual
+    '''Two independent linear probes over whatever two attributes `split`
+    carries (color/shape, or -- reused generically by
+    `build_cogs_style_task` -- department/urgency). Joint accuracy requires
+    both to be correct on a held-out pairing — the actual
     compositional-generalization signal; the per-attribute accuracies are
-    kept for diagnosis (e.g. "color transfers but shape doesn't").
+    kept for diagnosis (e.g. "color transfers but shape doesn't"). Class
+    counts are read from the label tensors themselves rather than hardcoded
+    against `_COLORS`/`_SHAPES`, so this works for any CompositionSplit.
     '''
+    n_color = int(torch.cat([split.train_color, split.test_color]).max()) + 1
+    n_shape = int(torch.cat([split.train_shape, split.test_shape]).max()) + 1
     color_acc = linear_probe_accuracy(
         train_features, split.train_color, test_features, split.test_color,
-        num_classes=len(_COLORS), epochs=epochs)
+        num_classes=n_color, epochs=epochs)
     shape_acc = linear_probe_accuracy(
         train_features, split.train_shape, test_features, split.test_shape,
-        num_classes=len(_SHAPES), epochs=epochs)
+        num_classes=n_shape, epochs=epochs)
     # Joint accuracy needs per-example correctness, not the two independent
     # rates multiplied together -- recompute predictions directly.
     color_probe, shape_probe = _fit_probe(
-        train_features, split.train_color, len(_COLORS), epochs), _fit_probe(
-        train_features, split.train_shape, len(_SHAPES), epochs)
+        train_features, split.train_color, n_color, epochs), _fit_probe(
+        train_features, split.train_shape, n_shape, epochs)
     with torch.no_grad():
         color_pred = color_probe(test_features).argmax(-1)
         shape_pred = shape_probe(test_features).argmax(-1)

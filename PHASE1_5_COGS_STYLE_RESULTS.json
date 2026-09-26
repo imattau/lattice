@@ -1,0 +1,142 @@
+{
+  "ar": {
+    "causal_probe": true,
+    "per_layer": [
+      {
+        "color_accuracy": 0.796875,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.796875
+      },
+      {
+        "color_accuracy": 0.84375,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.84375
+      },
+      {
+        "color_accuracy": 0.859375,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.859375
+      },
+      {
+        "color_accuracy": 0.828125,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.8125
+      },
+      {
+        "color_accuracy": 0.84375,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.84375
+      },
+      {
+        "color_accuracy": 0.859375,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.8125
+      }
+    ]
+  },
+  "jepa": {
+    "causal_probe": false,
+    "per_layer": [
+      {
+        "color_accuracy": 0.890625,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.890625
+      },
+      {
+        "color_accuracy": 0.921875,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.921875
+      },
+      {
+        "color_accuracy": 0.8125,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.828125
+      },
+      {
+        "color_accuracy": 0.75,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.75
+      },
+      {
+        "color_accuracy": 0.6875,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.6875
+      },
+      {
+        "color_accuracy": 0.671875,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.765625
+      }
+    ]
+  },
+  "contrastive": {
+    "causal_probe": false,
+    "per_layer": [
+      {
+        "color_accuracy": 0.4375,
+        "shape_accuracy": 0.953125,
+        "joint_accuracy": 0.484375
+      },
+      {
+        "color_accuracy": 0.328125,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.359375
+      },
+      {
+        "color_accuracy": 0.484375,
+        "shape_accuracy": 0.984375,
+        "joint_accuracy": 0.46875
+      },
+      {
+        "color_accuracy": 0.484375,
+        "shape_accuracy": 0.984375,
+        "joint_accuracy": 0.484375
+      },
+      {
+        "color_accuracy": 0.5,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.53125
+      },
+      {
+        "color_accuracy": 0.59375,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.609375
+      }
+    ]
+  },
+  "ar_jepa_aux": {
+    "causal_probe": true,
+    "per_layer": [
+      {
+        "color_accuracy": 0.75,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.8125
+      },
+      {
+        "color_accuracy": 0.75,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.75
+      },
+      {
+        "color_accuracy": 0.78125,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.734375
+      },
+      {
+        "color_accuracy": 0.84375,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.890625
+      },
+      {
+        "color_accuracy": 0.84375,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.859375
+      },
+      {
+        "color_accuracy": 0.84375,
+        "shape_accuracy": 1.0,
+        "joint_accuracy": 0.828125
+      }
+    ]
+  }
+}
