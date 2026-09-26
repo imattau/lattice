@@ -55,6 +55,43 @@ def _split_indices(n: int, train_frac: float, cal_frac: float,
     return perm[:n_train], perm[n_train:n_train + n_cal], perm[n_train + n_cal:]
 
 
+def load_banking77(data_path: str = 'data/banking77.csv'):
+    '''Return (texts, label_ids, label_names) from the local BANKING77 CSV.'''
+    path = Path(data_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f'BANKING77 CSV not found at {path}. Download it from: '
+            'https://raw.githubusercontent.com/PolyAI-LDN/task-specific-'
+            'datasets/master/banking_data/train.csv'
+        )
+    ds = load_dataset('csv', data_files={'train': str(path)})
+    texts = ds['train']['text']
+    categories = ds['train']['category']
+    label_names = sorted(set(categories))
+    label2id = {name: i for i, name in enumerate(label_names)}
+    labels = [label2id[c] for c in categories]
+    return texts, labels, label_names
+
+
+def _slug(name: str) -> str:
+    import re
+    return re.sub(r'[^0-9a-zA-Z]+', '_', name.strip('/')).lower().strip('_')
+
+
+def encode_cached(encoder_name: str, texts: list[str],
+                  cache_dir: str = 'data/feats', device: str | None = None,
+                  batch_size: int = 32) -> torch.Tensor:
+    '''Encode texts with a FrozenEncoder, caching the [N, D] tensor to disk.'''
+    cache = Path(cache_dir) / (_slug(encoder_name) + '.pt')
+    if cache.exists():
+        return torch.load(cache, weights_only=True)
+    encoder = FrozenEncoder(encoder_name, device=device)
+    feats = encoder.encode(texts, batch_size=batch_size)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(feats, cache)
+    return feats
+
+
 def prepare_data(encoder: FrozenEncoder,
                  data_path: str = 'data/banking77.csv',
                  train_frac: float = 0.70,
@@ -179,7 +216,7 @@ def _demo_decisions(head: ReadoutHead, features: torch.Tensor,
         for i in range(min(n, len(features))):
             feat = features[i:i + 1].to(device)
             readout = head(feat)
-            true_name = label_names[labels[i].item()]
+            true_name = label_names[int(labels[i].item())]
             # Treat a few intent categories as high-stakes for demonstration.
             high_stakes = {'lost_or_stolen_card', 'pin_blocked', 'cancel_transfer'}
             stakes = Stakes.HIGH if true_name in high_stakes else Stakes.LOW
@@ -188,7 +225,7 @@ def _demo_decisions(head: ReadoutHead, features: torch.Tensor,
             )
             decisions.append({
                 'true_label': true_name,
-                'predicted_label': label_names[readout.distribution.argmax(dim=-1).item()],
+                'predicted_label': label_names[int(readout.distribution.argmax(dim=-1).item())],
                 'confidence': float(readout.confidence.mean()),
                 'proposed_action': proposal.action_type,
                 'verdict': result.verdict.value,

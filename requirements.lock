@@ -1,0 +1,31 @@
+
+accelerate==1.14.0
+datasets==4.8.5
+einops==0.8.2
+filelock==3.29.7
+fsspec==2026.2.0
+hf-xet==1.5.1
+huggingface_hub==1.23.0
+# Install fresh (non-CUDA-default): pip install -r requirements.lock
+joblib==1.5.3
+# Locked environment that produced the Phase 0 results.
+# NOTE: torch here is the cu130 build; on new hosts install the matching
+numpy==2.5.1
+pandas==3.0.5
+pillow==12.3.0
+pyarrow==25.0.0
+# Regenerate: .venv/bin/pip freeze | grep -Ei '^(torch|transformers|...)' 
+regex==2026.6.28
+requests==2.34.2
+safetensors==0.8.0
+scikit-learn==1.9.0
+scipy==1.18.0
+sentencepiece==0.2.2
+threadpoolctl==3.6.0
+tiktoken==0.14.0
+tokenizers==0.22.2
+torch==2.13.0
+torchvision==0.28.0
+#       torch wheel for your CUDA, or pin from PyTorch's index URL.
+tqdm==4.68.4
+transformers==5.13.0

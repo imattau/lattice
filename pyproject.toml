@@ -21,9 +21,14 @@ classifiers = [
 dependencies = [
     "torch>=2.0",
     "transformers",
+    "tokenizers",
     "datasets",
+    "accelerate",
     "numpy",
     "scipy",
+    "scikit-learn",
+    "sentencepiece",
+    "tiktoken",
 ]
 
 [project.optional-dependencies]

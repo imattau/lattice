@@ -19,6 +19,8 @@ class FrozenEncoder:
     def __init__(self, model_name: str, device: str | None = None):
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = AutoModel.from_pretrained(model_name).to(self.device).eval()
         for p in self.model.parameters():
             p.requires_grad = False
