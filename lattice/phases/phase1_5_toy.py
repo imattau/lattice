@@ -36,6 +36,7 @@ class ToyConfig:
     lr: float = 3e-4
     mask_scale: tuple[float, float] = (0.15, 0.20)
     ema_start: float = 0.996
+    ar_jepa_alpha: float = 0.5
     seed: int = 0
 
 
@@ -253,6 +254,93 @@ def encode_pooled_contrastive(model: ContrastiveModel, tokens: torch.Tensor,
             h = model.encoder(batch, causal=False)
             feats.append(h.mean(dim=1).cpu())
     return torch.cat(feats, dim=0)
+
+
+@dataclass
+class ArJepaModel:
+    '''Token-primary, latent-auxiliary arm (the reframe LLM-JEPA and similar
+    published work actually use, vs. the spec's original latent-primary
+    framing): a standard causal AR model, plus a "NextLat" auxiliary loss —
+    predict the EMA target encoder's *next-position* latent from the causal
+    hidden state at the current position, exactly analogous to next-token
+    prediction but in latent space instead of vocabulary space. No masking
+    is needed (unlike the bidirectional JEPA arm) since the causal structure
+    already gives a well-defined "next" position to predict.
+    '''
+    ar_model: ARLanguageModel
+    target_encoder: TinyTransformer
+    predictor: Predictor
+
+    def num_params(self) -> int:
+        return self.ar_model.num_params() + sum(
+            p.numel() for p in self.predictor.parameters())
+
+
+def build_ar_jepa(vocab_size: int, config: ToyConfig) -> ArJepaModel:
+    context_backbone = TinyTransformer(vocab_size, config.dim, config.n_layers,
+                                       config.n_heads, config.max_len)
+    ar_model = ARLanguageModel(context_backbone)
+    target_encoder = TinyTransformer(vocab_size, config.dim, config.n_layers,
+                                     config.n_heads, config.max_len)
+    target_encoder.load_state_dict(context_backbone.state_dict())
+    for p in target_encoder.parameters():
+        p.requires_grad = False
+    predictor = Predictor(config.dim)
+    return ArJepaModel(ar_model, target_encoder, predictor)
+
+
+def train_ar_jepa(model: ArJepaModel, tokens: torch.Tensor, config: ToyConfig,
+                  device: str) -> list[dict]:
+    '''L = L_AR (next-token cross-entropy) + alpha * L_NextLat (cosine loss
+    predicting the EMA target encoder's next-position latent). This is the
+    "token-primary, latent-auxiliary" ordering, the reverse of the JEPA
+    arm's "latent-primary" objective, at the same architecture/data/budget.
+    '''
+    model.ar_model.to(device).train()
+    model.target_encoder.to(device).eval()
+    model.predictor.to(device).train()
+    opt = torch.optim.AdamW(
+        list(model.ar_model.parameters()) + list(model.predictor.parameters()),
+        lr=config.lr,
+    )
+    n = tokens.size(0)
+    steps_per_epoch = max(1, n // config.batch_size)
+    total_steps = config.epochs * steps_per_epoch
+    history = []
+    step = 0
+    for _ in range(config.epochs):
+        perm = torch.randperm(n)
+        for i in range(steps_per_epoch):
+            idx = perm[i * config.batch_size:(i + 1) * config.batch_size]
+            batch = tokens[idx].to(device)
+
+            logits, context_h = model.ar_model(batch)  # causal, full length
+            ce = F.cross_entropy(
+                logits[:, :-1].reshape(-1, logits.size(-1)),
+                batch[:, 1:].reshape(-1), ignore_index=CharTokenizer.PAD,
+            )
+
+            with torch.no_grad():
+                target_h = model.target_encoder(batch, causal=True)
+            pred = model.predictor(context_h[:, :-1])
+            target_next = target_h[:, 1:].detach()
+            valid = (batch[:, 1:] != CharTokenizer.PAD).float()
+            cos = F.cosine_similarity(pred, target_next, dim=-1)
+            latent_loss = -(cos * valid).sum() / valid.sum().clamp(min=1)
+
+            loss = ce + config.ar_jepa_alpha * latent_loss
+
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
+            tau = tau_schedule(step, total_steps, start=config.ema_start)
+            ema_update(model.target_encoder, model.ar_model.backbone, tau)
+
+            history.append({'loss': float(loss.item()), 'ce': float(ce.item()),
+                            'latent': float(latent_loss.item())})
+            step += 1
+    return history
 
 
 def encode_pooled_ar(model: ARLanguageModel, tokens: torch.Tensor,

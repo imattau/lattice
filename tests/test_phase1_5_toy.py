@@ -1,11 +1,11 @@
 import torch
 
 from lattice.phases.phase1_5_toy import (
-    ToyConfig, build_composition_task, build_contrastive, build_jepa,
-    composition_accuracy, effective_rank, encode_pooled_ar,
+    ToyConfig, build_ar_jepa, build_composition_task, build_contrastive,
+    build_jepa, composition_accuracy, effective_rank, encode_pooled_ar,
     encode_pooled_contrastive, encode_pooled_jepa, info_nce_loss,
     linear_probe_accuracy, make_augmented_view, make_block_mask, train_ar,
-    train_contrastive, train_jepa, uniformity,
+    train_ar_jepa, train_contrastive, train_jepa, uniformity,
 )
 from lattice.tiny_transformer import (
     ARLanguageModel, Predictor, TinyTransformer, ema_update, tau_schedule,
@@ -186,6 +186,25 @@ def test_contrastive_trains_and_loss_decreases():
     history = train_contrastive(model, tokens, config, device='cpu')
     assert history[-1] < history[0]
     feats = encode_pooled_contrastive(model, tokens[:8], device='cpu')
+    assert feats.shape == (8, config.dim)
+
+
+def test_ar_jepa_trains_and_both_loss_terms_decrease():
+    torch.manual_seed(0)
+    tok = CharTokenizer.fit(['hello world this is a test of the ar jepa '
+                             'auxiliary loss training loop end to end'])
+    tokens = tok.encode_batch(['hello world this is a test'] * 32, max_len=16)
+    config = ToyConfig(dim=16, n_layers=2, n_heads=2, max_len=16,
+                       batch_size=8, epochs=8, lr=1e-2, ar_jepa_alpha=0.5)
+    model = build_ar_jepa(tok.vocab_size, config)
+    history = train_ar_jepa(model, tokens, config, device='cpu')
+    ce_start = sum(h['ce'] for h in history[:4]) / 4
+    ce_end = sum(h['ce'] for h in history[-4:]) / 4
+    latent_start = sum(h['latent'] for h in history[:4]) / 4
+    latent_end = sum(h['latent'] for h in history[-4:]) / 4
+    assert ce_end < ce_start
+    assert latent_end < latent_start
+    feats = encode_pooled_ar(model.ar_model, tokens[:8], device='cpu')
     assert feats.shape == (8, config.dim)
 
 
