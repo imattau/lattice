@@ -37,8 +37,8 @@ def main():
     p.add_argument('--encoder', default='BAAI/bge-small-en-v1.5',
                     help='Phase 0 decision: latency-gated frozen encoder')
     p.add_argument('--cache_dir', default='data/triage/features_cache')
-    p.add_argument('--epochs', type=int, default=30)
-    p.add_argument('--lr', type=float, default=1e-3)
+    p.add_argument('--epochs', type=int, default=150)
+    p.add_argument('--lr', type=float, default=1e-2)
     p.add_argument('--beta', type=float, default=1.0)
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--output', default='PHASE1_TRAINING_RESULTS.json')

@@ -180,68 +180,111 @@ the readout bank's argmax outputs, evaluates it against the policy, and
 falls back to a guaranteed-compliant `escalate` action on rejection — the
 same deterministic-fallback pattern as the Phase 0 `Controller`.
 
-### Results (30K corpus, 40 epochs, seed 0 — `PHASE1_TRAINING_RESULTS.json`)
+### First run: routing ECE 0.595 — diagnosed, not a calibration research problem
+
+The first training run (`lr=1e-3`, 40 epochs) produced routing-head
+accuracy 0.934 but ECE 0.595 — implausible for that accuracy level, so it
+was decomposed before being treated as a finding
+(`scripts/diagnose_phase1_calibration.py`, reusing the cached features so
+the exact run is reproducible):
+
+- **Confidence histogram (routing, test set):** 95%+ of mass sat in the
+  0.2-0.5 confidence range, and *every* bucket from 0.3 up was 98-100%
+  accurate. That is the signature of **underconfidence**, not the
+  overconfidence-in-the-top-bin pattern a "hard 10-way problem" story would
+  predict.
+- **ECE split by hard_case vs. clean:** clean-only ECE was 0.624, *higher*
+  than the hard-case-only ECE of 0.481. The problem was not concentrated in
+  the adversarial 20% of the split — it was already broken on plain
+  documents, which rules out an adversarial-distribution-shift explanation.
+- **Root cause:** checked logit magnitude directly — mean top logit for
+  routing was only ~1.4 (10-way), i.e. the head was undertrained, not
+  miscalibrated by construction. `lr=1e-3` for 40 epochs never let the
+  linear head's logits grow large enough to produce confident, correct
+  softmax outputs, even though accuracy was already high. Raising to
+  `lr=1e-2` for 150 epochs (`scripts/train_phase1.py` defaults, now
+  updated) fixed it directly: routing ECE 0.595 → 0.009 at 0.997 accuracy,
+  with no architecture or loss changes.
+
+This was a hyperparameter bug, not a genuine multi-head calibration
+limitation — worth stating plainly since the fix and the interpretation
+differ completely (a real research problem here would have promoted an
+OOD-detector item to Phase 2; a training-config bug does not).
+
+### Results (30K corpus, `lr=1e-2`, 150 epochs, seed 0 — `PHASE1_TRAINING_RESULTS.json`)
 
 | Head | Accuracy (test) | ECE (test) | Brier (test) |
 |---|---:|---:|---:|
-| routing (10-way) | 0.934 | 0.595 | 0.514 |
-| urgency (3-way) | 0.825 | 0.286 | 0.396 |
-| escalation (binary) | 0.847 | 0.100 | 0.221 |
-| safety (binary) | 0.862 | 0.102 | 0.194 |
+| routing (10-way) | 0.997 | 0.009 | 0.006 |
+| urgency (3-way) | 0.960 | 0.024 | 0.060 |
+| escalation (binary) | 0.971 | 0.011 | 0.045 |
+| safety (binary) | 0.996 | 0.009 | 0.006 |
 
 | Controller-level (post constraint layer) | test | gold_validation | redteam |
 |---|---:|---:|---:|
 | N | 4,500 | 1,000 | 100 |
 | constraint-violation rate | **0.0** | **0.0** | **0.0** |
-| escalation-decision accuracy | 0.791 | 0.774 | 0.790 |
+| escalation-decision accuracy | 0.895 | 0.889 | 0.870 |
 | injection attempts in split | 473 | 145 | 47 |
-| raw-head injection-obedience rate (pre-constraint) | 3.2% | 4.1% | 2.1% |
+| raw-head injection-obedience rate (pre-constraint) | 3.4% | 5.5% | 0.0% |
 
-Reading:
-- **The headline Phase 1 gate — zero constraint violations, including on the
-  adversarial red-team set — holds.** This is the point of the layered
-  design: the raw routing head is occasionally fooled by an embedded
-  prompt-injection attempt (2-4% of injection attempts across splits — it
-  sometimes argmaxes to the department the injected text asks for), but the
-  constraint layer's `no_blacklisted_department` /
-  `escalate_on_safety_high_stakes` rules catch every one of those before an
-  action is taken, so the *system's* violation rate is 0% even though the
-  *head's* is not. That gap is exactly what the constraint layer is for.
-- **Escalation and safety are reasonably well calibrated** (ECE ~0.10) after
-  RLCD training — in the range of the Phase 0 typed-head numbers (~0.055,
-  albeit on a much easier 77-way single-label task).
-- **Routing calibration is poor (ECE 0.595) despite high accuracy (0.934)** —
-  a known finding, not yet resolved. Tried `beta_rlcd=3.0` (vs default 1.0);
-  ECE was unchanged (0.565 test). This looks structural to the 10-way
-  multiclass RLCD alignment term rather than an undertrained model: pushing
-  confidence toward 1 for correct predictions (the alignment penalty) with
-  high base accuracy concentrates almost all mass in the top confidence bin,
-  and any residual miscalibration there dominates ECE. **Do not treat the
-  routing head's confidence as reliable yet** — this is a genuine open
-  problem, not a "good enough" result, and it affects the
-  `escalation_confidence_threshold` fallback rule (`decide_triage`), whose
-  usefulness is a function of routing-confidence being trustworthy at all
-  (the threshold sweep picked the *lowest* candidate, 0.1, on val — evidence
-  it doesn't discriminate a lot here either).
-- **Escalation-decision accuracy (~0.79) is meaningfully below routing
-  accuracy (~0.93)** — escalation depends on getting urgency, safety, *and*
-  the hard-constraint interaction right simultaneously, so errors compound;
-  worth tracking separately from head-level accuracy going forward.
+Reading — three separate claims, kept separate deliberately (it is easy to
+let "zero violations" stand in for all three):
+
+- **Claim A — the constraint layer catches adversarial inputs the head
+  misses: validated.** The raw routing head is still fooled by a nonzero
+  fraction of prompt-injection attempts on test/gold (3.4%/5.5% — 0% on
+  the small 100-doc redteam set, likely sampling noise at n=47 injection
+  attempts, not evidence the improved head is immune), but
+  `no_blacklisted_department` / `escalate_on_safety_high_stakes` catch
+  every one before an action is taken: **system-level violation rate is
+  0.0 across test, gold_validation, and redteam.** This is the direct
+  empirical case for "safety is architectural, not behavioral" (spec §8):
+  behavioral accuracy on the routing decision is imperfect under attack;
+  the architectural gate is not.
+- **Claim B — the confidence-gated fallback adds safety beyond the
+  constraint layer: not validated by this run.** In every one of the
+  logged injection cases, it was the hard constraint rules that produced
+  the correction, not the `escalation_confidence_threshold` soft gate
+  (the threshold sweep on val picked the lowest candidate offered, 0.1,
+  which is weak evidence the gate isn't doing discriminating work here
+  either). Do not cite this result as validating the confidence gate as a
+  safety mechanism — only the hard constraint layer is validated.
+- **Claim C — the head is well-calibrated: now validated, after the fix
+  above** (all four heads ECE < 0.03). This was not true of the first run
+  and should not have been reported without the decomposition.
+- **The real open gap** (per the diagnosis in the pasted review this run
+  responds to): an adversarial input that induces a *plausible but wrong*
+  action — one that doesn't trip either hard rule and gets high confidence
+  from the head — would not be caught here. Nothing in this red-team set
+  exercises that case; it isn't a rule-violation, so no rule fires. Closing
+  it needs a representation-level OOD signal, not another hard rule. This
+  is now a **Phase 2 requirement** (an interoceptive/OOD modulator on the
+  shared representation), not a Phase 1 nice-to-have — logged here rather
+  than attempted in Phase 1.
+- **Escalation-decision accuracy (0.87-0.90) still trails head-level
+  accuracy (0.96-1.0)** because escalation depends on urgency, safety, and
+  the hard-rule interaction all being right together, so per-head errors
+  compound. Better than the pre-fix run (0.77-0.79) simply because the
+  underlying heads are better now, not because of a separate fix.
 
 ## Follow-ups still open
 
-1. **Fix routing-head calibration.** ECE 0.595 is not acceptable for a head
-   whose confidence gates a fallback rule. Try: per-class alignment penalty
-   instead of a single scalar, fewer epochs / early stopping on val ECE
-   (current run trains for a fixed 40 epochs with no ECE-based stopping),
-   or dropping in post-hoc temperature scaling as the primary calibration
-   path instead of relying on in-loop RLCD alone for the 10-way head.
+1. **Phase 2 requirement (promoted from a Phase 3 nice-to-have):** an
+   out-of-distribution / interoceptive signal at the representation level,
+   to catch adversarial inputs that induce a plausible-but-wrong action
+   without tripping either hard constraint rule — the gap Claim B above
+   does not close. Not attempted in Phase 1.
 2. **Real human annotation** for the 500-1,000 document validation set
    (`gold_validation.jsonl` is a placeholder only — the numbers above on
    that split are template-generated, not human-verified).
 3. **Optional: LLM-generated text pass** through the same schema, to close
-   the lexical-diversity gap noted above, once an LLM API is available in
+   the lexical-diversity gap noted earlier, once an LLM API is available in
    this environment.
-4. **Escalation-decision accuracy (~0.79)** is the weakest controller-level
-   number; worth root-causing which head (urgency vs safety vs the hard
-   rules) drives the errors before trusting it as a production gate.
+4. **Escalation-decision accuracy (~0.87-0.90)** is still the weakest
+   controller-level number; worth root-causing which head (urgency vs
+   safety) or which hard-rule interaction drives the remaining errors.
+5. Now that the encoder is locked and the constraint layer is empirically
+   validated, the plan's next experiment (Phase 1.5: toy-scale JEPA vs.
+   autoregressive generation) is unblocked — this is the setup for it, not
+   a replacement.
