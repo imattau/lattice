@@ -14,6 +14,13 @@ bag-of-words read cannot shortcut this.
 Reuses the four checkpoints already trained in PHASE1_5_RESULTS.pt (no
 retraining) and probes every layer, exactly like the shallow-task
 readout-pyramid probe, so the two are directly comparable.
+
+`--style symbolic` (original) produces dense "x=p y=m p=red..." assignment
+syntax; `--style natural` (default) produces ordinary declarative English
+("p is red. q is blue. ... x is p. y is m.") with the same anti-shortcut
+property, to separate "can the objective do two-hop binding" from "was
+this exact syntax ever seen during pretraining" -- the confound the
+symbolic-style run's floor result could not rule out.
 '''
 from __future__ import annotations
 import argparse
@@ -34,16 +41,21 @@ def main():
     p.add_argument('--checkpoint', default='PHASE1_5_RESULTS.pt')
     p.add_argument('--n_per_combo', type=int, default=16)
     p.add_argument('--seed', type=int, default=0)
-    p.add_argument('--output', default='PHASE1_5_DEEP_COMPOSITION_RESULTS.json')
+    p.add_argument('--style', choices=['symbolic', 'natural'], default='natural')
+    p.add_argument('--output', default=None)
     args = p.parse_args()
+    if args.output is None:
+        suffix = '' if args.style == 'symbolic' else '_NATURAL'
+        args.output = f'PHASE1_5_DEEP_COMPOSITION{suffix}_RESULTS.json'
 
     ckpt = torch.load(args.checkpoint, map_location='cpu')
     config = ckpt['config']
     tokenizer = CharTokenizer(ckpt['tokenizer_chars'])
     split = build_deep_composition_task(tokenizer, config['max_len'],
                                         n_per_combo=args.n_per_combo,
-                                        seed=args.seed)
-    print(f'Deep composition task: {split.train_tokens.size(0)} train, '
+                                        seed=args.seed, style=args.style)
+    print(f'Deep composition task ({args.style}): '
+         f'{split.train_tokens.size(0)} train, '
          f'{split.test_tokens.size(0)} test examples.')
 
     arms = [

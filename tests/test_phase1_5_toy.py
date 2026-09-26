@@ -187,6 +187,47 @@ def test_deep_composition_task_holds_out_pairings_but_not_values():
     assert train_pairs.isdisjoint(test_pairs)
 
 
+def test_deep_composition_task_natural_style_removes_lexical_shortcut():
+    '''Natural-language register must preserve the anti-shortcut property:
+    every color/shape word present in every example regardless of label.'''
+    import random
+    from lattice.phases.phase1_5_toy import _gen_deep_composition_text_natural
+    rng = random.Random(2)
+    for _ in range(20):
+        text = _gen_deep_composition_text_natural(rng, 1, 2)
+        for color in _COLORS:
+            assert color in text
+        for shape in _SHAPES:
+            assert shape in text
+        # Ordinary declarative sentences, not dense assignment syntax.
+        assert '=' not in text
+        assert '.' in text
+
+
+def test_deep_composition_task_natural_style_fits_toy_context_length():
+    tok = CharTokenizer.fit(['p is red. q is blue. r is green. s is yellow. '
+                             'm is circle. n is square. o is triangle. '
+                             'w is star. x is p. y is m.'])
+    split = build_deep_composition_task(tok, max_len=192, n_per_combo=4,
+                                        seed=0, style='natural')
+    # No example should have been silently truncated by the 192-char
+    # context length the toy models were trained with -- if it were, the
+    # tokenizer would have dropped the "x is ..." / "y is ..." suffix that
+    # carries the answer.
+    assert (split.train_tokens != 0).sum(dim=1).max() < 192
+
+
+def test_deep_composition_task_style_is_deterministic_per_style():
+    tok = CharTokenizer.fit(['p is red. q is blue. r is green. s is yellow. '
+                             'm is circle. n is square. o is triangle. '
+                             'w is star. x is p. y is m.'])
+    a = build_deep_composition_task(tok, max_len=192, n_per_combo=4, seed=0,
+                                    style='natural')
+    b = build_deep_composition_task(tok, max_len=192, n_per_combo=4, seed=0,
+                                    style='natural')
+    assert torch.equal(a.train_tokens, b.train_tokens)
+
+
 def test_composition_accuracy_recovers_separable_attributes():
     torch.manual_seed(0)
     tok = CharTokenizer.fit(['the red circle is on the table a blue square '

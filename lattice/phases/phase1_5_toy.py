@@ -484,13 +484,49 @@ def _gen_deep_composition_text(rng: random.Random, target_color_idx: int,
     return f'x={x_link} y={y_link} {color_assignments} {shape_assignments}'
 
 
+def _gen_deep_composition_text_natural(rng: random.Random,
+                                       target_color_idx: int,
+                                       target_shape_idx: int) -> str:
+    '''Same two-hop binding, ordinary-English register instead of dense
+    assignment syntax ("x=p y=m p=red..."). Every color/shape word still
+    appears in every example regardless of the answer -- the anti-shortcut
+    property is unchanged -- but the sentence pattern ("p is red.") is
+    simple declarative English, much closer to the pretraining corpus's
+    register (synthetic code/JSON aside, its natural-language portions --
+    BANKING77, Phase 1 triage text -- are ordinary sentences, not
+    symbolic notation). This isolates "can the objective do two-hop
+    binding" from "was this exact syntax ever seen during pretraining",
+    the confound flagged in PHASE1_5_DEEP_COMPOSITION_RESULTS.md.
+    '''
+    color_perm = list(range(len(_COLORS)))
+    rng.shuffle(color_perm)
+    shape_perm = list(range(len(_SHAPES)))
+    rng.shuffle(shape_perm)
+    x_link = _LINKS_COLOR[color_perm.index(target_color_idx)]
+    y_link = _LINKS_SHAPE[shape_perm.index(target_shape_idx)]
+    color_sentences = ' '.join(
+        f'{_LINKS_COLOR[i]} is {_COLORS[color_perm[i]]}.'
+        for i in range(len(_COLORS)))
+    shape_sentences = ' '.join(
+        f'{_LINKS_SHAPE[i]} is {_SHAPES[shape_perm[i]]}.'
+        for i in range(len(_SHAPES)))
+    return f'{color_sentences} {shape_sentences} x is {x_link}. y is {y_link}.'
+
+
 def build_deep_composition_task(
     tokenizer: CharTokenizer, max_len: int, n_per_combo: int = 16,
-    seed: int = 0,
+    seed: int = 0, style: str = 'symbolic',
 ) -> CompositionSplit:
     '''Same held-out (color, shape) pairings as `build_composition_task`
     (so results are comparable), but text requires two-hop variable-binding
-    resolution instead of literal substring detection to answer.'''
+    resolution instead of literal substring detection to answer.
+
+    `style`: 'symbolic' (original: "x=p y=m p=red...") or 'natural'
+    (ordinary-English sentences: "p is red. ... x is p."), same underlying
+    binding task and anti-shortcut property either way.
+    '''
+    gen_fn = (_gen_deep_composition_text if style == 'symbolic'
+             else _gen_deep_composition_text_natural)
     rng = random.Random(seed)
     train_texts, train_color, train_shape = [], [], []
     test_texts, test_color, test_shape = [], [], []
@@ -498,7 +534,7 @@ def build_deep_composition_task(
         for si, shape in enumerate(_SHAPES):
             is_held_out = (color, shape) in _HELD_OUT
             for _ in range(n_per_combo):
-                text = _gen_deep_composition_text(rng, ci, si)
+                text = gen_fn(rng, ci, si)
                 if is_held_out:
                     test_texts.append(text)
                     test_color.append(ci)

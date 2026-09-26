@@ -1,10 +1,16 @@
 # Phase 1.5 Follow-up: Deep (Non-Lexical) Compositional Generalization
 
-Status: **inconclusive by construction — all four arms floor at or below
-chance, including AR. This does not resolve whether the shallow-task
-compositional gap is real; it surfaces a different, more basic confound
-(likely out-of-distribution task format) that has to be fixed before this
-question can be answered.**
+Status: **inconclusive, and now more specifically so.** All four arms
+floor at or below chance in both the original symbolic phrasing and a
+natural-language reformulation of the identical task (see "Re-run in
+natural-language register" below) — including AR, which dominated the
+shallow lexical task. Reformatting to ordinary English ruled out "the
+symbolic assignment syntax confused every model" as the explanation
+without changing the result, which narrows the likely cause to zero
+pretraining exposure to any two-hop binding structure at all (in either
+register) combined with a frozen-linear-probe evaluation, rather than a
+surface-level text-format problem. This still does not resolve whether the
+shallow-task compositional gap is real.
 
 ## Motivation
 
@@ -99,40 +105,95 @@ outside. **This experiment cannot distinguish those two explanations as
 constructed**, which is the actual, honest conclusion — not "composition
 fails for everyone" and not "the shallow-task gap is refuted."
 
+## Re-run in natural-language register
+
+`build_deep_composition_task(..., style='natural')` keeps the identical
+two-hop binding structure and anti-shortcut property (every color/shape
+word still present in every example) but replaces the dense assignment
+syntax with ordinary declarative English:
+
+```
+p is red. q is blue. r is green. s is yellow. m is circle. n is square.
+o is triangle. w is star. x is p. y is m.
+```
+
+`scripts/diagnose_phase1_5_deep_composition.py --style natural` — same
+four checkpoints, no retraining, 192 train / 64 test examples (chance:
+0.25 per attribute, 0.0625 joint).
+
+| Arm | Joint accuracy range | Color accuracy range | Shape accuracy range |
+|---|---:|---:|---:|
+| AR | 0.016 - 0.078 | 0.234 - 0.312 | 0.312 - 0.438 |
+| JEPA | 0.000 - 0.047 | 0.250 - 0.297 | 0.281 - 0.391 |
+| Contrastive | 0.016 - 0.062 | 0.188 - 0.281 | 0.297 - 0.438 |
+| AR+JEPA-aux | 0.031 - 0.078 | 0.219 - 0.297 | 0.266 - 0.344 |
+
+**Still floor for every arm at every layer.** Joint accuracy remains at or
+near the 0.0625 chance level throughout, with no readout-depth effect
+(all top-to-best deltas are +0.03 to +0.05, indistinguishable from noise
+at n=64). One consistent, minor pattern worth naming: *shape* accuracy
+alone sits mildly above its 0.25 chance level for every arm (0.28-0.44),
+while *color* accuracy alone stays almost exactly at chance (0.19-0.31) —
+a faint, uniform signal that isn't specific to any one objective and
+doesn't move the joint metric, since both attributes must be correct
+simultaneously.
+
+**This changes the diagnosis, not the conclusion.** Reformatting to
+ordinary English removed the "confusing symbolic syntax" explanation
+without changing the outcome at all — the floor is not an artifact of
+`x=p`-style notation specifically. That narrows the likely cause from "the
+text format was out-of-distribution" to something closer to "the *task
+structure itself* (resolving a variable through an indirection table) was
+never encountered during pretraining, in any register, by any of the four
+arms, and a frozen linear probe on 192 examples cannot make up that gap
+regardless of which objective produced the frozen features." This is a
+different, more specific null result than the symbolic-only run
+suggested — and it is still a null result, not a finding that composition
+"fails" for any objective: the experiment as designed (frozen probe, zero
+pretraining exposure to indirection, ~200 training examples) may simply be
+under-powered to detect this ability in *any* of the four arms, AR
+included, regardless of whether that ability exists.
+
 ## What would actually resolve this
 
-1. **Reformat the deep task in natural-language register** — e.g. "the
-   item labeled p is red. the item labeled q is blue. ... x refers to
-   item p. what color is x?" — still non-lexically-shortcuttable (every
-   color/shape word still appears in every example), but grammatically
-   ordinary text closer to what the pretraining corpus actually contains,
-   isolating "can any of these objectives do indirection" from "was this
-   exact syntax ever seen."
-2. **Give the deep-task format some exposure during pretraining** (mix a
-   modest fraction of link-style assignment text into
-   `build_pretrain_corpus`) before evaluating with a frozen probe, so a
-   floor result can't be blamed on zero exposure.
+1. ~~Reformat the deep task in natural-language register~~ — **done above;
+   ruled out text format as the explanation, did not resolve the question.**
+2. **Give the deep-task's *structure* some exposure during pretraining**
+   (mix a modest fraction of indirection-style text — natural-language
+   register, per above — into `build_pretrain_corpus`) before evaluating
+   with a frozen probe, so a floor result can no longer be blamed on zero
+   exposure to the task type at all. This is now the most likely candidate
+   fix, having ruled out (1).
 3. **Fine-tune rather than frozen-probe** on the deep task, to separate
    "does the frozen representation already linearly contain the answer"
    from "can this architecture learn the relationship given more direct
    training signal" — the frozen-probe design used throughout Phase 1.5
    is deliberately conservative (spec's "linear probe on a frozen Core" is
-   exactly the intended evaluation protocol) but it is the more likely
-   source of this floor result than any property of the objectives
-   themselves.
-4. Until one of the above is run, **the shallow-task compositional gap
-   (AR 0.938-1.000 vs. JEPA 0.625-0.812 vs. contrastive 0.188-0.562,
-   narrowed but not closed by the readout-pyramid follow-up) remains the
-   best available toy-scale evidence** — weakened by the lexical-shortcut
-   caveat, but not superseded by this null result, since the null result
-   has its own unresolved confound.
+   exactly the intended evaluation protocol), but for a task with zero
+   pretraining exposure by construction, it may simply be the wrong tool.
+4. **More training examples** (currently 192) — 2-hop indirection with a
+   4x4 permutation space is a combinatorially richer rule than the shallow
+   task's direct lexical mapping; it may need more than 12 pairings x 16
+   replicates to be learnable via a frozen linear probe at all, independent
+   of the pretraining-exposure question.
+5. Until one of the above changes the floor result, **the shallow-task
+   compositional gap (AR 0.938-1.000 vs. JEPA 0.625-0.812 vs. contrastive
+   0.188-0.562, narrowed but not closed by the readout-pyramid follow-up)
+   remains the best available toy-scale evidence** — weakened by the
+   lexical-shortcut caveat, but not superseded by either deep-task run,
+   since both have their own unresolved confound (zero task-structure
+   exposure during pretraining, and possibly too little probe-training
+   data).
 
 ## Bottom line for the design question
 
-This does not move the JEPA-vs-AR question in either direction. It
-surfaces a methodological limitation (out-of-distribution task format for
-a frozen-probe evaluation) that needs fixing before a genuinely deep
-compositional task can produce an interpretable answer at this toy scale.
-The recommended next step is (1) above — reformat in natural-language
-register — since it is the cheapest way to remove the confound without
-retraining any of the four arms.
+This still does not move the JEPA-vs-AR question in either direction. Two
+rounds of this experiment (symbolic, then natural-language) have narrowed
+the explanation for the floor result from "confusing text format" to "zero
+pretraining exposure to this task structure, in a frozen-probe evaluation,
+on a small training set" — a real, if less flashy, finding about the
+experiment's own limits. The next move that could actually produce a
+signal is (2) above: give the pretraining corpus some exposure to
+indirection-style text before evaluating, since both text-format and
+"just add more data" explanations have now been addressed or ruled out
+without resolving the floor.
