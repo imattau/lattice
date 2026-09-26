@@ -446,6 +446,77 @@ def build_composition_task(tokenizer: CharTokenizer, max_len: int
     )
 
 
+# ---- Deep (non-lexical) compositional generalization -----------------------
+#
+# The task above can be solved from layer 1 by every arm (including AR at
+# 1.000 joint accuracy) because the color and shape words are literal
+# substrings of the input -- a probe only needs to detect "was the substring
+# 'red' present", never combine information across positions. That is closer
+# to lexical detection than compositional reasoning, and the readout-pyramid
+# follow-up (PHASE1_5_LAYER_PYRAMID_RESULTS.md) flagged this as a real
+# caveat on how much weight the shallow task's numbers can bear.
+#
+# This variant removes the shortcut with two-hop variable binding: every
+# color and every shape word appears as a substring in *every* example
+# regardless of the answer (via a full link->value mapping table), and which
+# value is bound to "x" (the color answer) or "y" (the shape answer) is
+# randomized per example. A bag-of-words / single-position read cannot solve
+# this -- "is `red` present" is true in every example, train and test alike.
+# The correct answer requires resolving x -> its link -> the value that link
+# maps to *in this specific example*, i.e. combining two separate facts.
+
+_LINKS_COLOR = ['p', 'q', 'r', 's']
+_LINKS_SHAPE = ['m', 'n', 'o', 'w']
+
+
+def _gen_deep_composition_text(rng: random.Random, target_color_idx: int,
+                               target_shape_idx: int) -> str:
+    color_perm = list(range(len(_COLORS)))
+    rng.shuffle(color_perm)
+    shape_perm = list(range(len(_SHAPES)))
+    rng.shuffle(shape_perm)
+    x_link = _LINKS_COLOR[color_perm.index(target_color_idx)]
+    y_link = _LINKS_SHAPE[shape_perm.index(target_shape_idx)]
+    color_assignments = ' '.join(
+        f'{_LINKS_COLOR[i]}={_COLORS[color_perm[i]]}' for i in range(len(_COLORS)))
+    shape_assignments = ' '.join(
+        f'{_LINKS_SHAPE[i]}={_SHAPES[shape_perm[i]]}' for i in range(len(_SHAPES)))
+    return f'x={x_link} y={y_link} {color_assignments} {shape_assignments}'
+
+
+def build_deep_composition_task(
+    tokenizer: CharTokenizer, max_len: int, n_per_combo: int = 16,
+    seed: int = 0,
+) -> CompositionSplit:
+    '''Same held-out (color, shape) pairings as `build_composition_task`
+    (so results are comparable), but text requires two-hop variable-binding
+    resolution instead of literal substring detection to answer.'''
+    rng = random.Random(seed)
+    train_texts, train_color, train_shape = [], [], []
+    test_texts, test_color, test_shape = [], [], []
+    for ci, color in enumerate(_COLORS):
+        for si, shape in enumerate(_SHAPES):
+            is_held_out = (color, shape) in _HELD_OUT
+            for _ in range(n_per_combo):
+                text = _gen_deep_composition_text(rng, ci, si)
+                if is_held_out:
+                    test_texts.append(text)
+                    test_color.append(ci)
+                    test_shape.append(si)
+                else:
+                    train_texts.append(text)
+                    train_color.append(ci)
+                    train_shape.append(si)
+    return CompositionSplit(
+        train_tokens=tokenizer.encode_batch(train_texts, max_len),
+        train_color=torch.tensor(train_color),
+        train_shape=torch.tensor(train_shape),
+        test_tokens=tokenizer.encode_batch(test_texts, max_len),
+        test_color=torch.tensor(test_color),
+        test_shape=torch.tensor(test_shape),
+    )
+
+
 def composition_accuracy(
     train_features: torch.Tensor, split: CompositionSplit,
     test_features: torch.Tensor, epochs: int = 300,
@@ -507,6 +578,36 @@ def uniformity(z: torch.Tensor, t: float = 2.0) -> float:
     z = F.normalize(z, dim=-1)
     sq_dists = torch.pdist(z, p=2).pow(2)
     return torch.log(torch.exp(-t * sq_dists).mean()).item()
+
+
+def load_arm_backbone(ckpt: dict, key: str, config: dict, vocab_size: int
+                      ) -> TinyTransformer:
+    '''Rebuild a trained backbone from a PHASE1_5_RESULTS.pt-style checkpoint
+    without retraining -- used by follow-up diagnostics (e.g. the
+    readout-pyramid / layer-probing scripts) that reuse the four arms'
+    already-trained weights.'''
+    model = TinyTransformer(vocab_size, config['dim'], config['n_layers'],
+                            config['n_heads'], config['max_len'])
+    model.load_state_dict(ckpt[key])
+    model.eval()
+    return model
+
+
+def layerwise_pooled(model: TinyTransformer, tokens: torch.Tensor,
+                     causal: bool, batch_size: int = 256
+                     ) -> list[torch.Tensor]:
+    '''Mean-pooled features at every layer: a list of [N, D] tensors, one
+    per transformer block, for probing representation quality at each
+    depth instead of only the top layer's output.'''
+    n_layers = len(model.blocks)
+    per_layer: list[list[torch.Tensor]] = [[] for _ in range(n_layers)]
+    with torch.no_grad():
+        for i in range(0, tokens.size(0), batch_size):
+            batch = tokens[i:i + batch_size]
+            hiddens = model.forward_layers(batch, causal=causal)
+            for li, h in enumerate(hiddens):
+                per_layer[li].append(h.mean(dim=1))
+    return [torch.cat(chunks, dim=0) for chunks in per_layer]
 
 
 def effective_rank(z: torch.Tensor) -> float:

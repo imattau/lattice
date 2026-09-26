@@ -29,35 +29,12 @@ from pathlib import Path
 import torch
 
 from lattice.phases.phase1_5_toy import (
-    build_composition_task, composition_accuracy, linear_probe_accuracy,
+    build_composition_task, composition_accuracy, layerwise_pooled,
+    linear_probe_accuracy, load_arm_backbone,
 )
-from lattice.tiny_transformer import TinyTransformer
 from lattice.toy_corpus import (
     CharTokenizer, load_banking77_labeled, load_triage_labeled,
 )
-
-
-def _load_backbone(ckpt: dict, key: str, config: dict, vocab_size: int
-                   ) -> TinyTransformer:
-    model = TinyTransformer(vocab_size, config['dim'], config['n_layers'],
-                            config['n_heads'], config['max_len'])
-    model.load_state_dict(ckpt[key])
-    model.eval()
-    return model
-
-
-def _layerwise_pooled(model: TinyTransformer, tokens: torch.Tensor,
-                      causal: bool, batch_size: int = 256) -> list[torch.Tensor]:
-    '''Returns a list of [N, D] pooled features, one per layer.'''
-    n_layers = len(model.blocks)
-    per_layer: list[list[torch.Tensor]] = [[] for _ in range(n_layers)]
-    with torch.no_grad():
-        for i in range(0, tokens.size(0), batch_size):
-            batch = tokens[i:i + batch_size]
-            hiddens = model.forward_layers(batch, causal=causal)
-            for li, h in enumerate(hiddens):
-                per_layer[li].append(h.mean(dim=1))
-    return [torch.cat(chunks, dim=0) for chunks in per_layer]
 
 
 def main():
@@ -102,15 +79,15 @@ def main():
 
     results = {}
     for name, key, _ in arms:
-        model = _load_backbone(ckpt, key, config, tokenizer.vocab_size)
+        model = load_arm_backbone(ckpt, key, config, tokenizer.vocab_size)
         causal = causal_variants.get(name, False)
         print(f'Probing {name} ({"causal" if causal else "bidirectional"} '
              f'read) across {config["n_layers"]} layers ...')
 
-        train_layers = _layerwise_pooled(model, split.train_tokens, causal)
-        test_layers = _layerwise_pooled(model, split.test_tokens, causal)
-        banking_layers = _layerwise_pooled(model, banking_tokens, causal)
-        triage_layers = _layerwise_pooled(model, triage_tokens, causal)
+        train_layers = layerwise_pooled(model, split.train_tokens, causal)
+        test_layers = layerwise_pooled(model, split.test_tokens, causal)
+        banking_layers = layerwise_pooled(model, banking_tokens, causal)
+        triage_layers = layerwise_pooled(model, triage_tokens, causal)
 
         per_layer = []
         for li in range(config['n_layers']):

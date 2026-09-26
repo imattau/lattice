@@ -1,8 +1,9 @@
 import torch
 
 from lattice.phases.phase1_5_toy import (
-    ToyConfig, build_ar_jepa, build_composition_task, build_contrastive,
-    build_jepa, composition_accuracy, effective_rank, encode_pooled_ar,
+    _COLORS, _SHAPES, ToyConfig, build_ar_jepa, build_composition_task,
+    build_contrastive, build_deep_composition_task, build_jepa,
+    composition_accuracy, effective_rank, encode_pooled_ar,
     encode_pooled_contrastive, encode_pooled_jepa, info_nce_loss,
     linear_probe_accuracy, make_augmented_view, make_block_mask, train_ar,
     train_ar_jepa, train_contrastive, train_jepa, uniformity,
@@ -139,6 +140,48 @@ def test_composition_task_holds_out_pairings_but_not_attribute_values():
     assert set(split.test_color.tolist()) <= set(split.train_color.tolist())
     assert set(split.test_shape.tolist()) <= set(split.train_shape.tolist())
     # But the exact (color, shape) pairings in test must be absent from train.
+    train_pairs = set(zip(split.train_color.tolist(), split.train_shape.tolist()))
+    test_pairs = set(zip(split.test_color.tolist(), split.test_shape.tolist()))
+    assert train_pairs.isdisjoint(test_pairs)
+
+
+def test_deep_composition_task_is_deterministic():
+    tok = CharTokenizer.fit(['x=p y=m p=red q=blue r=green s=yellow '
+                             'm=circle n=square o=triangle w=star'])
+    a = build_deep_composition_task(tok, max_len=96, n_per_combo=4, seed=0)
+    b = build_deep_composition_task(tok, max_len=96, n_per_combo=4, seed=0)
+    assert torch.equal(a.train_tokens, b.train_tokens)
+    assert torch.equal(a.train_color, b.train_color)
+
+
+def test_deep_composition_task_removes_lexical_shortcut():
+    '''Every color and shape word must appear as a substring in every
+    example, train and test alike -- otherwise a bag-of-words probe could
+    solve the task without doing the two-hop binding resolution it's meant
+    to require (the flaw the deep task exists to fix in the original
+    lexically-transparent composition task).'''
+    tok = CharTokenizer.fit(['x=p y=m p=red q=blue r=green s=yellow '
+                             'm=circle n=square o=triangle w=star'])
+    split = build_deep_composition_task(tok, max_len=96, n_per_combo=4, seed=1)
+    # Decode a handful of raw texts back out via the tokenizer's own vocab
+    # is unnecessary here -- regenerate directly to inspect text content.
+    import random
+    from lattice.phases.phase1_5_toy import _gen_deep_composition_text
+    rng = random.Random(1)
+    for _ in range(20):
+        text = _gen_deep_composition_text(rng, 0, 0)
+        for color in _COLORS:
+            assert color in text
+        for shape in _SHAPES:
+            assert shape in text
+
+
+def test_deep_composition_task_holds_out_pairings_but_not_values():
+    tok = CharTokenizer.fit(['x=p y=m p=red q=blue r=green s=yellow '
+                             'm=circle n=square o=triangle w=star'])
+    split = build_deep_composition_task(tok, max_len=96, n_per_combo=4, seed=0)
+    assert set(split.test_color.tolist()) <= set(split.train_color.tolist())
+    assert set(split.test_shape.tolist()) <= set(split.train_shape.tolist())
     train_pairs = set(zip(split.train_color.tolist(), split.train_shape.tolist()))
     test_pairs = set(zip(split.test_color.tolist(), split.test_shape.tolist()))
     assert train_pairs.isdisjoint(test_pairs)
