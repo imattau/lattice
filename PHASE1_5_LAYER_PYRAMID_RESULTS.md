@@ -91,12 +91,22 @@ the per-layer probe, not fit to it afterward.
 
 ## What this does and doesn't change
 
-- **Confirmed:** a "readout pyramid" (reading from — or concatenating —
-  multiple depths, standard in vision since Feature Pyramid Networks,
-  2017) would very likely recover a meaningful fraction of the
-  compositional-generalization gap for JEPA and especially contrastive,
-  at zero retraining cost. This is a specific, well-understood,
-  cheap architectural fix, not a research question.
+- **Confirmed:** reading from an earlier layer instead of the top layer
+  recovers real accuracy for JEPA and especially contrastive, at zero
+  retraining cost.
+- **Retracted — see `PHASE1_5_READOUT_PYRAMID_RESULTS.md`:** this document
+  originally inferred from that finding that *concatenating* multiple
+  depths into a readout pyramid "would very likely recover a meaningful
+  fraction of the gap... at zero retraining cost." That inference was
+  wrong, or at least not supported when directly tested. Naive
+  concatenation of layers {1, 4, 6} into a single linear probe
+  underperforms even the top-layer-only baseline for JEPA and
+  AR+JEPA-aux on the composition task, and only clearly helps contrastive.
+  The per-layer finding above (information exists at multiple depths) is
+  still correct; "so concatenate them" does not follow automatically —
+  see that document for the likely cause (a small-sample optimization
+  artifact from tripling feature dimensionality on a 48-example training
+  set) and what would need to change before re-testing the claim.
 - **Not closed:** even at its best layer, JEPA (0.812) and contrastive
   (0.562) still trail plain AR's best layer (1.000) and AR+JEPA-aux's
   best layer (0.875) on compositional joint accuracy. A readout pyramid
@@ -123,9 +133,13 @@ Per the reasoning that motivated this test: **do not assume the top layer
 is the right layer for a downstream probe**, especially for objectives
 (contrastive, and to a lesser extent JEPA) whose top-layer loss explicitly
 or implicitly rewards invariance. The Latent Probing Suite should probe
-multiple depths — or use a readout pyramid by default — rather than the
-single top-layer pooled output this toy pilot (and, until now, the
-plan's description of the Latent Probing Suite) implicitly assumed.
+multiple depths and pick per-task rather than assuming the single
+top-layer pooled output this toy pilot (and, until now, the plan's
+description of the Latent Probing Suite) implicitly assumed. **Do not**,
+however, default to a concatenation-based readout pyramid without testing
+it first — `PHASE1_5_READOUT_PYRAMID_RESULTS.md` found naive concatenation
+underperforms even the top-layer baseline for two of the three
+latent-objective arms on the small-sample composition task.
 
 ## Follow-ups
 
