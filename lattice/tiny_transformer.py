@@ -55,6 +55,19 @@ class TinyTransformer(nn.Module):
 
     def forward(self, tokens: torch.Tensor, causal: bool = False
                ) -> torch.Tensor:
+        return self.forward_layers(tokens, causal=causal)[-1]
+
+    def forward_layers(self, tokens: torch.Tensor, causal: bool = False
+                       ) -> list[torch.Tensor]:
+        '''Returns the residual-stream hidden state after each transformer
+        block (index 0 = after the first block, ..., last = after the final
+        block with `ln_f` applied — identical to `forward`'s output). Used
+        to probe representation quality at intermediate depths: BERT-style
+        models are known to stratify (POS low, parsing mid, semantics high)
+        without explicit layer-wise supervision, and the top layer is
+        specialized for the training objective, not necessarily the best
+        layer for a downstream probe.
+        '''
         B, T = tokens.shape
         pos = torch.arange(T, device=tokens.device).unsqueeze(0)
         x = self.token_emb(tokens) + self.pos_emb(pos)
@@ -64,9 +77,12 @@ class TinyTransformer(nn.Module):
                 torch.full((T, T), float('-inf'), device=tokens.device),
                 diagonal=1,
             )
+        hiddens = []
         for block in self.blocks:
             x = block(x, attn_mask=attn_mask)
-        return self.ln_f(x)
+            hiddens.append(x)
+        hiddens[-1] = self.ln_f(hiddens[-1])
+        return hiddens
 
 
 class ARLanguageModel(nn.Module):

@@ -252,6 +252,19 @@ Reading:
   real 10M-50M-parameter / 100M-1B-token scale, with a masking/loss grid
   and the real probe suite — has not been executed.
 
+## Follow-up: is the gap a missing representation, or a readout-depth artifact?
+
+**Done — see `PHASE1_5_LAYER_PYRAMID_RESULTS.md`.** All probes above only
+ever read the top layer's pooled output. Probing every layer of the
+already-trained checkpoints (no retraining) shows the compositional signal
+is not fully absent for JEPA/contrastive — it's present at earlier layers
+and degrades toward the top, in an order (contrastive >> JEPA > AR ~ 0)
+that exactly matches how strongly each objective's top-layer loss rewards
+invariance to input perturbation over token fidelity. Reading from layer 1
+instead of the top layer recovers +0.375 composition-joint-accuracy for
+contrastive and +0.188 for JEPA, but does not close the gap to AR's own
+best layer — a readout pyramid would narrow this gap, not eliminate it.
+
 ## Follow-ups still open
 
 1. **Sweep `ar_jepa_alpha`** (currently fixed at 0.5) before drawing any

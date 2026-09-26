@@ -46,6 +46,20 @@ def test_tiny_transformer_forward_shapes():
     assert out_causal.shape == (4, 8, 16)
 
 
+def test_forward_layers_returns_one_hidden_state_per_block_and_matches_forward():
+    model = TinyTransformer(vocab_size=20, dim=16, n_layers=4, n_heads=2,
+                            max_len=8)
+    tokens = torch.randint(3, 20, (4, 8))
+    hiddens = model.forward_layers(tokens, causal=False)
+    assert len(hiddens) == 4
+    for h in hiddens:
+        assert h.shape == (4, 8, 16)
+    # Last layer must match plain forward() (which applies ln_f at the top).
+    assert torch.allclose(hiddens[-1], model(tokens, causal=False))
+    # Earlier layers must differ from the top (not a no-op stack).
+    assert not torch.allclose(hiddens[0], hiddens[-1])
+
+
 def test_ar_model_trains_and_loss_decreases():
     torch.manual_seed(0)
     tok = CharTokenizer.fit(['hello world this is a test of the ar model'])
