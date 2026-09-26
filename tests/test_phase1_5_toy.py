@@ -413,3 +413,35 @@ def test_finetune_composition_accuracy_does_not_mutate_input_backbone():
                                   lr=1e-2, device='cpu')
     after = next(backbone.parameters())
     assert torch.equal(before, after)
+
+
+def test_finetune_pooled_model_fits_training_set():
+    from lattice.phases.phase1_5_toy import finetune_pooled_model
+    from lattice.vsa import BidirectionalPooledBackbone
+
+    torch.manual_seed(0)
+    tok = CharTokenizer.fit(['the red circle is on the table a blue square '
+                             'this green triangle that yellow star'])
+    split = build_composition_task(tok, max_len=32)
+    model = BidirectionalPooledBackbone(tok.vocab_size, dim=16, n_layers=2,
+                                        n_heads=2, max_len=32)
+    result = finetune_pooled_model(model, split, epochs=50, lr=1e-2,
+                                   device='cpu')
+    assert result['train']['joint_accuracy'] > 0.5
+    assert result['num_params'] > 0
+
+
+def test_finetune_pooled_model_works_with_vsa_encoder():
+    from lattice.phases.phase1_5_toy import finetune_pooled_model
+    from lattice.vsa import VSAEncoder
+
+    torch.manual_seed(0)
+    tok = CharTokenizer.fit(['the red circle is on the table a blue square '
+                             'this green triangle that yellow star'])
+    split = build_composition_task(tok, max_len=32)
+    model = VSAEncoder(tok.vocab_size, dim=16, n_layers=2, n_heads=2,
+                       max_len=32)
+    result = finetune_pooled_model(model, split, epochs=50, lr=1e-2,
+                                   device='cpu')
+    assert 0.0 <= result['train']['joint_accuracy'] <= 1.0
+    assert 0.0 <= result['test']['joint_accuracy'] <= 1.0
