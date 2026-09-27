@@ -19,10 +19,11 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn.functional as F
 
+from lattice.synthetic_triage import DEPARTMENT_NAMES, _TOPICS, _URGENT_PHRASES
 from lattice.tiny_transformer import (
     ARLanguageModel, Predictor, TinyTransformer, ema_update, tau_schedule,
 )
-from lattice.toy_corpus import CharTokenizer
+from lattice.toy_corpus import CharTokenizer, _JSON_NAMES, _JSON_STATUS
 
 
 @dataclass
@@ -36,6 +37,7 @@ class ToyConfig:
     lr: float = 3e-4
     mask_scale: tuple[float, float] = (0.15, 0.20)
     ema_start: float = 0.996
+    ar_jepa_alpha: float = 0.5
     seed: int = 0
 
 
@@ -255,6 +257,93 @@ def encode_pooled_contrastive(model: ContrastiveModel, tokens: torch.Tensor,
     return torch.cat(feats, dim=0)
 
 
+@dataclass
+class ArJepaModel:
+    '''Token-primary, latent-auxiliary arm (the reframe LLM-JEPA and similar
+    published work actually use, vs. the spec's original latent-primary
+    framing): a standard causal AR model, plus a "NextLat" auxiliary loss —
+    predict the EMA target encoder's *next-position* latent from the causal
+    hidden state at the current position, exactly analogous to next-token
+    prediction but in latent space instead of vocabulary space. No masking
+    is needed (unlike the bidirectional JEPA arm) since the causal structure
+    already gives a well-defined "next" position to predict.
+    '''
+    ar_model: ARLanguageModel
+    target_encoder: TinyTransformer
+    predictor: Predictor
+
+    def num_params(self) -> int:
+        return self.ar_model.num_params() + sum(
+            p.numel() for p in self.predictor.parameters())
+
+
+def build_ar_jepa(vocab_size: int, config: ToyConfig) -> ArJepaModel:
+    context_backbone = TinyTransformer(vocab_size, config.dim, config.n_layers,
+                                       config.n_heads, config.max_len)
+    ar_model = ARLanguageModel(context_backbone)
+    target_encoder = TinyTransformer(vocab_size, config.dim, config.n_layers,
+                                     config.n_heads, config.max_len)
+    target_encoder.load_state_dict(context_backbone.state_dict())
+    for p in target_encoder.parameters():
+        p.requires_grad = False
+    predictor = Predictor(config.dim)
+    return ArJepaModel(ar_model, target_encoder, predictor)
+
+
+def train_ar_jepa(model: ArJepaModel, tokens: torch.Tensor, config: ToyConfig,
+                  device: str) -> list[dict]:
+    '''L = L_AR (next-token cross-entropy) + alpha * L_NextLat (cosine loss
+    predicting the EMA target encoder's next-position latent). This is the
+    "token-primary, latent-auxiliary" ordering, the reverse of the JEPA
+    arm's "latent-primary" objective, at the same architecture/data/budget.
+    '''
+    model.ar_model.to(device).train()
+    model.target_encoder.to(device).eval()
+    model.predictor.to(device).train()
+    opt = torch.optim.AdamW(
+        list(model.ar_model.parameters()) + list(model.predictor.parameters()),
+        lr=config.lr,
+    )
+    n = tokens.size(0)
+    steps_per_epoch = max(1, n // config.batch_size)
+    total_steps = config.epochs * steps_per_epoch
+    history = []
+    step = 0
+    for _ in range(config.epochs):
+        perm = torch.randperm(n)
+        for i in range(steps_per_epoch):
+            idx = perm[i * config.batch_size:(i + 1) * config.batch_size]
+            batch = tokens[idx].to(device)
+
+            logits, context_h = model.ar_model(batch)  # causal, full length
+            ce = F.cross_entropy(
+                logits[:, :-1].reshape(-1, logits.size(-1)),
+                batch[:, 1:].reshape(-1), ignore_index=CharTokenizer.PAD,
+            )
+
+            with torch.no_grad():
+                target_h = model.target_encoder(batch, causal=True)
+            pred = model.predictor(context_h[:, :-1])
+            target_next = target_h[:, 1:].detach()
+            valid = (batch[:, 1:] != CharTokenizer.PAD).float()
+            cos = F.cosine_similarity(pred, target_next, dim=-1)
+            latent_loss = -(cos * valid).sum() / valid.sum().clamp(min=1)
+
+            loss = ce + config.ar_jepa_alpha * latent_loss
+
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
+            tau = tau_schedule(step, total_steps, start=config.ema_start)
+            ema_update(model.target_encoder, model.ar_model.backbone, tau)
+
+            history.append({'loss': float(loss.item()), 'ce': float(ce.item()),
+                            'latent': float(latent_loss.item())})
+            step += 1
+    return history
+
+
 def encode_pooled_ar(model: ARLanguageModel, tokens: torch.Tensor,
                      device: str, batch_size: int = 256) -> torch.Tensor:
     model.eval()
@@ -358,26 +447,253 @@ def build_composition_task(tokenizer: CharTokenizer, max_len: int
     )
 
 
+# ---- Deep (non-lexical) compositional generalization -----------------------
+#
+# The task above can be solved from layer 1 by every arm (including AR at
+# 1.000 joint accuracy) because the color and shape words are literal
+# substrings of the input -- a probe only needs to detect "was the substring
+# 'red' present", never combine information across positions. That is closer
+# to lexical detection than compositional reasoning, and the readout-pyramid
+# follow-up (PHASE1_5_LAYER_PYRAMID_RESULTS.md) flagged this as a real
+# caveat on how much weight the shallow task's numbers can bear.
+#
+# This variant removes the shortcut with two-hop variable binding: every
+# color and every shape word appears as a substring in *every* example
+# regardless of the answer (via a full link->value mapping table), and which
+# value is bound to "x" (the color answer) or "y" (the shape answer) is
+# randomized per example. A bag-of-words / single-position read cannot solve
+# this -- "is `red` present" is true in every example, train and test alike.
+# The correct answer requires resolving x -> its link -> the value that link
+# maps to *in this specific example*, i.e. combining two separate facts.
+
+_LINKS_COLOR = ['p', 'q', 'r', 's']
+_LINKS_SHAPE = ['m', 'n', 'o', 'w']
+
+
+def _gen_deep_composition_text(rng: random.Random, target_color_idx: int,
+                               target_shape_idx: int) -> str:
+    color_perm = list(range(len(_COLORS)))
+    rng.shuffle(color_perm)
+    shape_perm = list(range(len(_SHAPES)))
+    rng.shuffle(shape_perm)
+    x_link = _LINKS_COLOR[color_perm.index(target_color_idx)]
+    y_link = _LINKS_SHAPE[shape_perm.index(target_shape_idx)]
+    color_assignments = ' '.join(
+        f'{_LINKS_COLOR[i]}={_COLORS[color_perm[i]]}' for i in range(len(_COLORS)))
+    shape_assignments = ' '.join(
+        f'{_LINKS_SHAPE[i]}={_SHAPES[shape_perm[i]]}' for i in range(len(_SHAPES)))
+    return f'x={x_link} y={y_link} {color_assignments} {shape_assignments}'
+
+
+def _gen_deep_composition_text_natural(rng: random.Random,
+                                       target_color_idx: int,
+                                       target_shape_idx: int) -> str:
+    '''Same two-hop binding, ordinary-English register instead of dense
+    assignment syntax ("x=p y=m p=red..."). Every color/shape word still
+    appears in every example regardless of the answer -- the anti-shortcut
+    property is unchanged -- but the sentence pattern ("p is red.") is
+    simple declarative English, much closer to the pretraining corpus's
+    register (synthetic code/JSON aside, its natural-language portions --
+    BANKING77, Phase 1 triage text -- are ordinary sentences, not
+    symbolic notation). This isolates "can the objective do two-hop
+    binding" from "was this exact syntax ever seen during pretraining",
+    the confound flagged in PHASE1_5_DEEP_COMPOSITION_RESULTS.md.
+    '''
+    color_perm = list(range(len(_COLORS)))
+    rng.shuffle(color_perm)
+    shape_perm = list(range(len(_SHAPES)))
+    rng.shuffle(shape_perm)
+    x_link = _LINKS_COLOR[color_perm.index(target_color_idx)]
+    y_link = _LINKS_SHAPE[shape_perm.index(target_shape_idx)]
+    color_sentences = ' '.join(
+        f'{_LINKS_COLOR[i]} is {_COLORS[color_perm[i]]}.'
+        for i in range(len(_COLORS)))
+    shape_sentences = ' '.join(
+        f'{_LINKS_SHAPE[i]} is {_SHAPES[shape_perm[i]]}.'
+        for i in range(len(_SHAPES)))
+    return f'{color_sentences} {shape_sentences} x is {x_link}. y is {y_link}.'
+
+
+def build_deep_composition_task(
+    tokenizer: CharTokenizer, max_len: int, n_per_combo: int = 16,
+    seed: int = 0, style: str = 'symbolic',
+) -> CompositionSplit:
+    '''Same held-out (color, shape) pairings as `build_composition_task`
+    (so results are comparable), but text requires two-hop variable-binding
+    resolution instead of literal substring detection to answer.
+
+    `style`: 'symbolic' (original: "x=p y=m p=red...") or 'natural'
+    (ordinary-English sentences: "p is red. ... x is p."), same underlying
+    binding task and anti-shortcut property either way.
+    '''
+    gen_fn = (_gen_deep_composition_text if style == 'symbolic'
+             else _gen_deep_composition_text_natural)
+    rng = random.Random(seed)
+    train_texts, train_color, train_shape = [], [], []
+    test_texts, test_color, test_shape = [], [], []
+    for ci, color in enumerate(_COLORS):
+        for si, shape in enumerate(_SHAPES):
+            is_held_out = (color, shape) in _HELD_OUT
+            for _ in range(n_per_combo):
+                text = gen_fn(rng, ci, si)
+                if is_held_out:
+                    test_texts.append(text)
+                    test_color.append(ci)
+                    test_shape.append(si)
+                else:
+                    train_texts.append(text)
+                    train_color.append(ci)
+                    train_shape.append(si)
+    return CompositionSplit(
+        train_tokens=tokenizer.encode_batch(train_texts, max_len),
+        train_color=torch.tensor(train_color),
+        train_shape=torch.tensor(train_shape),
+        test_tokens=tokenizer.encode_batch(test_texts, max_len),
+        test_color=torch.tensor(test_color),
+        test_shape=torch.tensor(test_shape),
+    )
+
+
+# ---- COGS-style compositional generalization ------------------------------
+#
+# Both compositional tasks above have an exposure problem the deep task's
+# natural-language re-run couldn't resolve: neither the vocabulary nor the
+# structure they use (colors/shapes; "x=p"-style or "p is red."-style
+# indirection) appears anywhere in the pretraining corpus
+# (`build_pretrain_corpus`) for any of the four arms. A floor result on
+# such a task can't distinguish "the objective can't do this" from "the
+# model never saw anything like this at all."
+#
+# COGS (Kim & Linzen, 2020) tests compositional generalization the other
+# way: primitives (words, simple structures) the model *has* seen,
+# recombined in ways it hasn't. This task follows that recipe using
+# vocabulary verifiably present, verbatim, in the actual pretraining corpus
+# for these four checkpoints -- not a new corpus, not a retrain. Department
+# names (`support`, `billing`, ...) appear literally in Phase 1 triage
+# documents sampled into `build_pretrain_corpus` (the `general_inquiry`
+# template embeds `{dept}`, and the `injected_instruction`/`rule_precedence`
+# hard cases explicitly write "route this message to the {dept}
+# department"). The four urgency phrases below are appended verbatim to
+# ~15% of triage documents by `synthetic_triage._make_clean`. Both are
+# therefore primitives these four checkpoints already encountered in
+# natural-language context during pretraining -- what's held out is only
+# the *pairing* of a specific department with a specific urgency phrase in
+# a sentence frame ("I have a question about {topic}. {urgency} Please
+# route this to {department}.") that itself never appears verbatim in the
+# pretraining corpus either.
+
+_COGS_DEPARTMENTS = DEPARTMENT_NAMES[:4]
+_COGS_URGENCY = list(_URGENT_PHRASES)
+assert len(_COGS_DEPARTMENTS) == 4 and len(_COGS_URGENCY) == 4
+_COGS_HELD_OUT = {(0, 1), (1, 2), (2, 3), (3, 0)}
+
+
+def _cogs_template_triage(rng: random.Random, a: str, b: str) -> str:
+    topic = rng.choice(_TOPICS)
+    return f'I have a question about {topic}. {b} Please route this to {a}.'
+
+
+# A second, independently-sourced COGS-style task for replication
+# (per follow-up review: "same corpus, different primitives, different
+# held-out pairing"). `_JSON_NAMES`/`_JSON_STATUS` come from
+# lattice.toy_corpus's synthetic JSON generator -- a completely different
+# pretraining-corpus tier from the triage-derived department/urgency task
+# above (code+JSON vs. natural-language triage text), so a replicated
+# result here isn't just re-testing the same corpus slice.
+_COGS2_NAMES = _JSON_NAMES[:4]
+_COGS2_STATUS = list(_JSON_STATUS)
+assert len(_COGS2_NAMES) == 4 and len(_COGS2_STATUS) == 4
+_COGS2_HELD_OUT = {(0, 2), (1, 3), (2, 0), (3, 1)}
+
+
+def _cogs_template_json(rng: random.Random, a: str, b: str) -> str:
+    return f'the {a} process has status {b}.'
+
+
+def _build_cogs_style_task(
+    tokenizer: CharTokenizer, max_len: int, primitives_a: list[str],
+    primitives_b: list[str], held_out: set[tuple[int, int]],
+    template_fn, n_per_combo: int, seed: int,
+) -> CompositionSplit:
+    rng = random.Random(seed)
+    train_texts, train_a, train_b = [], [], []
+    test_texts, test_a, test_b = [], [], []
+    for ai in range(len(primitives_a)):
+        for bi in range(len(primitives_b)):
+            is_held_out = (ai, bi) in held_out
+            for _ in range(n_per_combo):
+                text = template_fn(rng, primitives_a[ai], primitives_b[bi])
+                if is_held_out:
+                    test_texts.append(text)
+                    test_a.append(ai)
+                    test_b.append(bi)
+                else:
+                    train_texts.append(text)
+                    train_a.append(ai)
+                    train_b.append(bi)
+    return CompositionSplit(
+        train_tokens=tokenizer.encode_batch(train_texts, max_len),
+        train_color=torch.tensor(train_a),
+        train_shape=torch.tensor(train_b),
+        test_tokens=tokenizer.encode_batch(test_texts, max_len),
+        test_color=torch.tensor(test_a),
+        test_shape=torch.tensor(test_b),
+    )
+
+
+def build_cogs_style_task(tokenizer: CharTokenizer, max_len: int,
+                          n_per_combo: int = 16, seed: int = 0
+                          ) -> CompositionSplit:
+    '''Department names x urgency phrases, both verified present verbatim in
+    the actual Phase 1 triage documents sampled into the pretraining
+    corpus. `CompositionSplit.train_color`/`train_shape` are reused
+    generically here for department index / urgency index --
+    `composition_accuracy` only cares about two integer-labeled attributes,
+    not their semantics.
+    '''
+    return _build_cogs_style_task(
+        tokenizer, max_len, _COGS_DEPARTMENTS, _COGS_URGENCY, _COGS_HELD_OUT,
+        _cogs_template_triage, n_per_combo, seed)
+
+
+def build_cogs_style_task_v2(tokenizer: CharTokenizer, max_len: int,
+                             n_per_combo: int = 16, seed: int = 0
+                             ) -> CompositionSplit:
+    '''Replication task with different primitives from a different
+    pretraining-corpus tier: JSON `name` and `status` values, verbatim in
+    the synthetic-JSON slice of `build_pretrain_corpus` (a different corpus
+    source than the triage-derived department/urgency task above).'''
+    return _build_cogs_style_task(
+        tokenizer, max_len, _COGS2_NAMES, _COGS2_STATUS, _COGS2_HELD_OUT,
+        _cogs_template_json, n_per_combo, seed)
+
+
 def composition_accuracy(
     train_features: torch.Tensor, split: CompositionSplit,
     test_features: torch.Tensor, epochs: int = 300,
 ) -> dict:
-    '''Two independent 4-way linear probes (color, shape). Joint accuracy
-    requires both to be correct on a held-out pairing — the actual
+    '''Two independent linear probes over whatever two attributes `split`
+    carries (color/shape, or -- reused generically by
+    `build_cogs_style_task` -- department/urgency). Joint accuracy requires
+    both to be correct on a held-out pairing — the actual
     compositional-generalization signal; the per-attribute accuracies are
-    kept for diagnosis (e.g. "color transfers but shape doesn't").
+    kept for diagnosis (e.g. "color transfers but shape doesn't"). Class
+    counts are read from the label tensors themselves rather than hardcoded
+    against `_COLORS`/`_SHAPES`, so this works for any CompositionSplit.
     '''
+    n_color = int(torch.cat([split.train_color, split.test_color]).max()) + 1
+    n_shape = int(torch.cat([split.train_shape, split.test_shape]).max()) + 1
     color_acc = linear_probe_accuracy(
         train_features, split.train_color, test_features, split.test_color,
-        num_classes=len(_COLORS), epochs=epochs)
+        num_classes=n_color, epochs=epochs)
     shape_acc = linear_probe_accuracy(
         train_features, split.train_shape, test_features, split.test_shape,
-        num_classes=len(_SHAPES), epochs=epochs)
+        num_classes=n_shape, epochs=epochs)
     # Joint accuracy needs per-example correctness, not the two independent
     # rates multiplied together -- recompute predictions directly.
     color_probe, shape_probe = _fit_probe(
-        train_features, split.train_color, len(_COLORS), epochs), _fit_probe(
-        train_features, split.train_shape, len(_SHAPES), epochs)
+        train_features, split.train_color, n_color, epochs), _fit_probe(
+        train_features, split.train_shape, n_shape, epochs)
     with torch.no_grad():
         color_pred = color_probe(test_features).argmax(-1)
         shape_pred = shape_probe(test_features).argmax(-1)
@@ -421,6 +737,36 @@ def uniformity(z: torch.Tensor, t: float = 2.0) -> float:
     return torch.log(torch.exp(-t * sq_dists).mean()).item()
 
 
+def load_arm_backbone(ckpt: dict, key: str, config: dict, vocab_size: int
+                      ) -> TinyTransformer:
+    '''Rebuild a trained backbone from a PHASE1_5_RESULTS.pt-style checkpoint
+    without retraining -- used by follow-up diagnostics (e.g. the
+    readout-pyramid / layer-probing scripts) that reuse the four arms'
+    already-trained weights.'''
+    model = TinyTransformer(vocab_size, config['dim'], config['n_layers'],
+                            config['n_heads'], config['max_len'])
+    model.load_state_dict(ckpt[key])
+    model.eval()
+    return model
+
+
+def layerwise_pooled(model: TinyTransformer, tokens: torch.Tensor,
+                     causal: bool, batch_size: int = 256
+                     ) -> list[torch.Tensor]:
+    '''Mean-pooled features at every layer: a list of [N, D] tensors, one
+    per transformer block, for probing representation quality at each
+    depth instead of only the top layer's output.'''
+    n_layers = len(model.blocks)
+    per_layer: list[list[torch.Tensor]] = [[] for _ in range(n_layers)]
+    with torch.no_grad():
+        for i in range(0, tokens.size(0), batch_size):
+            batch = tokens[i:i + batch_size]
+            hiddens = model.forward_layers(batch, causal=causal)
+            for li, h in enumerate(hiddens):
+                per_layer[li].append(h.mean(dim=1))
+    return [torch.cat(chunks, dim=0) for chunks in per_layer]
+
+
 def effective_rank(z: torch.Tensor) -> float:
     '''exp(entropy of normalized singular values) — a scalar proxy for how
     many dimensions the representation actually uses.'''
@@ -430,3 +776,148 @@ def effective_rank(z: torch.Tensor) -> float:
     p = p[p > 1e-12]
     entropy = -(p * torch.log(p)).sum()
     return torch.exp(entropy).item()
+
+
+# ---- Fine-tuned (not frozen) evaluation ------------------------------------
+#
+# Every probe above freezes the encoder and trains only a linear head --
+# deliberately conservative (the spec's "linear probe on a frozen Core" is
+# the intended Phase 1/1.5 protocol), but it answers a narrower question
+# than "can this objective's representation support the task at all": a
+# frozen probe can only recover what's already linearly decodable. This
+# answers the complementary question -- given direct gradient signal on the
+# task itself, how learnable is it from these starting weights -- which is
+# a different, useful thing to know regardless of what the frozen probe
+# showed (per the split-question and COGS-replication follow-ups).
+
+class _TwoAttributeHead(torch.nn.Module):
+    def __init__(self, dim: int, n_a: int, n_b: int):
+        super().__init__()
+        self.head_a = torch.nn.Linear(dim, n_a)
+        self.head_b = torch.nn.Linear(dim, n_b)
+
+    def forward(self, pooled: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.head_a(pooled), self.head_b(pooled)
+
+
+def finetune_composition_accuracy(
+    backbone: TinyTransformer, split: CompositionSplit, causal: bool,
+    epochs: int = 500, lr: float = 1e-4, device: str = 'cpu',
+) -> dict:
+    '''Unfreezes a copy of `backbone` (the loaded checkpoint is left
+    untouched) and trains it end-to-end, jointly with a small two-head
+    classifier, directly on `split`'s train examples -- full-batch AdamW,
+    the whole training set fits in one batch at this scale. Reports both
+    train and test accuracy so overfitting (high train, low test) is
+    visible rather than silently conflated with genuine learning.
+    '''
+    import copy
+    model = copy.deepcopy(backbone).to(device)
+    for p in model.parameters():
+        p.requires_grad = True
+    model.train()
+
+    n_a = int(torch.cat([split.train_color, split.test_color]).max()) + 1
+    n_b = int(torch.cat([split.train_shape, split.test_shape]).max()) + 1
+    head = _TwoAttributeHead(model.dim, n_a, n_b).to(device)
+    head.train()
+
+    opt = torch.optim.AdamW(list(model.parameters()) + list(head.parameters()),
+                            lr=lr)
+    train_tokens = split.train_tokens.to(device)
+    train_a = split.train_color.to(device)
+    train_b = split.train_shape.to(device)
+
+    loss_history = []
+    for epoch in range(epochs):
+        pooled = model(train_tokens, causal=causal).mean(dim=1)
+        logits_a, logits_b = head(pooled)
+        loss = (F.cross_entropy(logits_a, train_a)
+               + F.cross_entropy(logits_b, train_b))
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        loss_history.append(float(loss.item()))
+
+    def _eval(tokens, labels_a, labels_b):
+        model.eval()
+        head.eval()
+        with torch.no_grad():
+            pooled = model(tokens.to(device), causal=causal).mean(dim=1)
+            pred_a, pred_b = head(pooled)
+            pred_a, pred_b = pred_a.argmax(-1).cpu(), pred_b.argmax(-1).cpu()
+        model.train()
+        head.train()
+        acc_a = (pred_a == labels_a).float().mean().item()
+        acc_b = (pred_b == labels_b).float().mean().item()
+        joint = ((pred_a == labels_a) & (pred_b == labels_b)).float().mean().item()
+        return {'color_accuracy': acc_a, 'shape_accuracy': acc_b,
+                'joint_accuracy': joint}
+
+    return {
+        'train': _eval(split.train_tokens, split.train_color, split.train_shape),
+        'test': _eval(split.test_tokens, split.test_color, split.test_shape),
+        'loss_history_every_20': loss_history[::20],
+    }
+
+
+def finetune_pooled_model(
+    model: torch.nn.Module, split: CompositionSplit, epochs: int = 500,
+    lr: float = 1e-4, device: str = 'cpu',
+) -> dict:
+    '''Same protocol as `finetune_composition_accuracy`, generalized to any
+    module implementing `forward(tokens) -> [B, D]` pooled features
+    directly (e.g. `lattice.vsa.VSAEncoder` or
+    `lattice.vsa.BidirectionalPooledBackbone`) instead of assuming a
+    `TinyTransformer` with an external `.mean(dim=1)` pooling step. Trains
+    `model` in place -- callers pass a freshly-constructed model, not a
+    loaded checkpoint, when comparing architectures from scratch.
+    '''
+    model = model.to(device)
+    for p in model.parameters():
+        p.requires_grad = True
+    model.train()
+
+    n_a = int(torch.cat([split.train_color, split.test_color]).max()) + 1
+    n_b = int(torch.cat([split.train_shape, split.test_shape]).max()) + 1
+    head = _TwoAttributeHead(model.dim, n_a, n_b).to(device)
+    head.train()
+
+    opt = torch.optim.AdamW(list(model.parameters()) + list(head.parameters()),
+                            lr=lr)
+    train_tokens = split.train_tokens.to(device)
+    train_a = split.train_color.to(device)
+    train_b = split.train_shape.to(device)
+
+    loss_history = []
+    for epoch in range(epochs):
+        pooled = model(train_tokens)
+        logits_a, logits_b = head(pooled)
+        loss = (F.cross_entropy(logits_a, train_a)
+               + F.cross_entropy(logits_b, train_b))
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        loss_history.append(float(loss.item()))
+
+    def _eval(tokens, labels_a, labels_b):
+        model.eval()
+        head.eval()
+        with torch.no_grad():
+            pooled = model(tokens.to(device))
+            pred_a, pred_b = head(pooled)
+            pred_a, pred_b = pred_a.argmax(-1).cpu(), pred_b.argmax(-1).cpu()
+        model.train()
+        head.train()
+        acc_a = (pred_a == labels_a).float().mean().item()
+        acc_b = (pred_b == labels_b).float().mean().item()
+        joint = ((pred_a == labels_a) & (pred_b == labels_b)).float().mean().item()
+        return {'color_accuracy': acc_a, 'shape_accuracy': acc_b,
+                'joint_accuracy': joint}
+
+    return {
+        'train': _eval(split.train_tokens, split.train_color, split.train_shape),
+        'test': _eval(split.test_tokens, split.test_color, split.test_shape),
+        'loss_history_every_20': loss_history[::20],
+        'num_params': sum(p.numel() for p in model.parameters()),
+    }

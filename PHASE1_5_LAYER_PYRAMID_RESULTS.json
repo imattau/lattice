@@ -1,0 +1,190 @@
+{
+  "ar": {
+    "causal_probe": true,
+    "per_layer": [
+      {
+        "composition_joint_accuracy": 1.0,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 1.0,
+        "banking77_intent_accuracy": 0.06833333522081375,
+        "triage_department_accuracy": 0.9833333492279053
+      },
+      {
+        "composition_joint_accuracy": 0.9375,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.9375,
+        "banking77_intent_accuracy": 0.07000000029802322,
+        "triage_department_accuracy": 0.9900000095367432
+      },
+      {
+        "composition_joint_accuracy": 0.9375,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.9375,
+        "banking77_intent_accuracy": 0.07333333045244217,
+        "triage_department_accuracy": 0.996666669845581
+      },
+      {
+        "composition_joint_accuracy": 0.9375,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.9375,
+        "banking77_intent_accuracy": 0.07666666805744171,
+        "triage_department_accuracy": 0.996666669845581
+      },
+      {
+        "composition_joint_accuracy": 0.9375,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.9375,
+        "banking77_intent_accuracy": 0.07500000298023224,
+        "triage_department_accuracy": 0.996666669845581
+      },
+      {
+        "composition_joint_accuracy": 0.9375,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.9375,
+        "banking77_intent_accuracy": 0.07500000298023224,
+        "triage_department_accuracy": 1.0
+      }
+    ]
+  },
+  "jepa": {
+    "causal_probe": false,
+    "per_layer": [
+      {
+        "composition_joint_accuracy": 0.8125,
+        "composition_color_accuracy": 0.9375,
+        "composition_shape_accuracy": 0.8125,
+        "banking77_intent_accuracy": 0.054999999701976776,
+        "triage_department_accuracy": 0.9516666531562805
+      },
+      {
+        "composition_joint_accuracy": 0.75,
+        "composition_color_accuracy": 0.8125,
+        "composition_shape_accuracy": 0.9375,
+        "banking77_intent_accuracy": 0.05000000074505806,
+        "triage_department_accuracy": 0.9666666388511658
+      },
+      {
+        "composition_joint_accuracy": 0.75,
+        "composition_color_accuracy": 0.8125,
+        "composition_shape_accuracy": 0.9375,
+        "banking77_intent_accuracy": 0.05666666850447655,
+        "triage_department_accuracy": 0.95333331823349
+      },
+      {
+        "composition_joint_accuracy": 0.8125,
+        "composition_color_accuracy": 0.75,
+        "composition_shape_accuracy": 1.0,
+        "banking77_intent_accuracy": 0.06499999761581421,
+        "triage_department_accuracy": 0.9433333277702332
+      },
+      {
+        "composition_joint_accuracy": 0.6875,
+        "composition_color_accuracy": 0.75,
+        "composition_shape_accuracy": 0.9375,
+        "banking77_intent_accuracy": 0.05833333358168602,
+        "triage_department_accuracy": 0.9416666626930237
+      },
+      {
+        "composition_joint_accuracy": 0.625,
+        "composition_color_accuracy": 0.75,
+        "composition_shape_accuracy": 1.0,
+        "banking77_intent_accuracy": 0.061666667461395264,
+        "triage_department_accuracy": 0.9433333277702332
+      }
+    ]
+  },
+  "contrastive": {
+    "causal_probe": false,
+    "per_layer": [
+      {
+        "composition_joint_accuracy": 0.5625,
+        "composition_color_accuracy": 0.875,
+        "composition_shape_accuracy": 0.5625,
+        "banking77_intent_accuracy": 0.03999999910593033,
+        "triage_department_accuracy": 0.9300000071525574
+      },
+      {
+        "composition_joint_accuracy": 0.3125,
+        "composition_color_accuracy": 0.8125,
+        "composition_shape_accuracy": 0.6875,
+        "banking77_intent_accuracy": 0.03500000014901161,
+        "triage_department_accuracy": 0.8949999809265137
+      },
+      {
+        "composition_joint_accuracy": 0.3125,
+        "composition_color_accuracy": 0.5625,
+        "composition_shape_accuracy": 0.5625,
+        "banking77_intent_accuracy": 0.02500000037252903,
+        "triage_department_accuracy": 0.875
+      },
+      {
+        "composition_joint_accuracy": 0.25,
+        "composition_color_accuracy": 0.75,
+        "composition_shape_accuracy": 0.5,
+        "banking77_intent_accuracy": 0.029999999329447746,
+        "triage_department_accuracy": 0.846666693687439
+      },
+      {
+        "composition_joint_accuracy": 0.1875,
+        "composition_color_accuracy": 0.6875,
+        "composition_shape_accuracy": 0.375,
+        "banking77_intent_accuracy": 0.03500000014901161,
+        "triage_department_accuracy": 0.824999988079071
+      },
+      {
+        "composition_joint_accuracy": 0.1875,
+        "composition_color_accuracy": 0.625,
+        "composition_shape_accuracy": 0.4375,
+        "banking77_intent_accuracy": 0.02500000037252903,
+        "triage_department_accuracy": 0.82833331823349
+      }
+    ]
+  },
+  "ar_jepa_aux": {
+    "causal_probe": true,
+    "per_layer": [
+      {
+        "composition_joint_accuracy": 0.875,
+        "composition_color_accuracy": 0.9375,
+        "composition_shape_accuracy": 0.875,
+        "banking77_intent_accuracy": 0.06333333253860474,
+        "triage_department_accuracy": 0.9900000095367432
+      },
+      {
+        "composition_joint_accuracy": 0.75,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.75,
+        "banking77_intent_accuracy": 0.07000000029802322,
+        "triage_department_accuracy": 0.9916666746139526
+      },
+      {
+        "composition_joint_accuracy": 0.75,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.8125,
+        "banking77_intent_accuracy": 0.07666666805744171,
+        "triage_department_accuracy": 0.996666669845581
+      },
+      {
+        "composition_joint_accuracy": 0.75,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.75,
+        "banking77_intent_accuracy": 0.07333333045244217,
+        "triage_department_accuracy": 0.9950000047683716
+      },
+      {
+        "composition_joint_accuracy": 0.8125,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.8125,
+        "banking77_intent_accuracy": 0.07833333313465118,
+        "triage_department_accuracy": 0.996666669845581
+      },
+      {
+        "composition_joint_accuracy": 0.8125,
+        "composition_color_accuracy": 1.0,
+        "composition_shape_accuracy": 0.75,
+        "banking77_intent_accuracy": 0.07999999821186066,
+        "triage_department_accuracy": 1.0
+      }
+    ]
+  }
+}

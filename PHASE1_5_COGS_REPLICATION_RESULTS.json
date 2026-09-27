@@ -1,0 +1,162 @@
+{
+  "ar": {
+    "task1_department_urgency": {
+      "top_layer": 0.84375,
+      "own_best_layer": 3,
+      "own_best_value": 0.859375,
+      "heldout_selected_layer": 4,
+      "heldout_selected_value": 0.796875,
+      "per_layer": [
+        0.796875,
+        0.84375,
+        0.859375,
+        0.796875,
+        0.828125,
+        0.84375
+      ]
+    },
+    "task2_json_name_status": {
+      "top_layer": 1.0,
+      "own_best_layer": 1,
+      "own_best_value": 1.0,
+      "heldout_selected_layer": 4,
+      "heldout_selected_value": 1.0,
+      "per_layer": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "banking77_per_layer": [
+      0.06333333253860474,
+      0.07000000029802322,
+      0.07666666805744171,
+      0.07999999821186066,
+      0.07666666805744171,
+      0.07333333045244217
+    ]
+  },
+  "jepa": {
+    "task1_department_urgency": {
+      "top_layer": 0.6875,
+      "own_best_layer": 2,
+      "own_best_value": 0.921875,
+      "heldout_selected_layer": 6,
+      "heldout_selected_value": 0.6875,
+      "per_layer": [
+        0.890625,
+        0.921875,
+        0.796875,
+        0.78125,
+        0.703125,
+        0.6875
+      ]
+    },
+    "task2_json_name_status": {
+      "top_layer": 0.5,
+      "own_best_layer": 2,
+      "own_best_value": 1.0,
+      "heldout_selected_layer": 6,
+      "heldout_selected_value": 0.5,
+      "per_layer": [
+        0.75,
+        1.0,
+        0.75,
+        0.75,
+        0.5,
+        0.5
+      ]
+    },
+    "banking77_per_layer": [
+      0.0533333346247673,
+      0.04833333194255829,
+      0.05666666850447655,
+      0.061666667461395264,
+      0.05666666850447655,
+      0.06833333522081375
+    ]
+  },
+  "contrastive": {
+    "task1_department_urgency": {
+      "top_layer": 0.625,
+      "own_best_layer": 6,
+      "own_best_value": 0.625,
+      "heldout_selected_layer": 1,
+      "heldout_selected_value": 0.4375,
+      "per_layer": [
+        0.4375,
+        0.328125,
+        0.484375,
+        0.453125,
+        0.5,
+        0.625
+      ]
+    },
+    "task2_json_name_status": {
+      "top_layer": 0.0,
+      "own_best_layer": 1,
+      "own_best_value": 0.0,
+      "heldout_selected_layer": 1,
+      "heldout_selected_value": 0.0,
+      "per_layer": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "banking77_per_layer": [
+      0.038333334028720856,
+      0.03500000014901161,
+      0.023333333432674408,
+      0.03166666626930237,
+      0.036666665226221085,
+      0.028333334252238274
+    ]
+  },
+  "ar_jepa_aux": {
+    "task1_department_urgency": {
+      "top_layer": 0.828125,
+      "own_best_layer": 4,
+      "own_best_value": 0.828125,
+      "heldout_selected_layer": 5,
+      "heldout_selected_value": 0.828125,
+      "per_layer": [
+        0.796875,
+        0.78125,
+        0.78125,
+        0.828125,
+        0.828125,
+        0.828125
+      ]
+    },
+    "task2_json_name_status": {
+      "top_layer": 1.0,
+      "own_best_layer": 1,
+      "own_best_value": 1.0,
+      "heldout_selected_layer": 5,
+      "heldout_selected_value": 1.0,
+      "per_layer": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "banking77_per_layer": [
+      0.06833333522081375,
+      0.07000000029802322,
+      0.07666666805744171,
+      0.07500000298023224,
+      0.08166666328907013,
+      0.08166666328907013
+    ]
+  }
+}

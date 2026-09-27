@@ -20,10 +20,10 @@ from pathlib import Path
 import torch
 
 from lattice.phases.phase1_5_toy import (
-    ToyConfig, build_composition_task, build_contrastive, build_jepa,
-    composition_accuracy, effective_rank, encode_pooled_ar,
+    ToyConfig, build_ar_jepa, build_composition_task, build_contrastive,
+    build_jepa, composition_accuracy, effective_rank, encode_pooled_ar,
     encode_pooled_contrastive, encode_pooled_jepa, linear_probe_accuracy,
-    train_ar, train_contrastive, train_jepa, uniformity,
+    train_ar, train_ar_jepa, train_contrastive, train_jepa, uniformity,
 )
 from lattice.tiny_transformer import ARLanguageModel, TinyTransformer
 from lattice.toy_corpus import (
@@ -98,10 +98,22 @@ def main():
          f'trained_params={contrastive.num_params():,}  '
          f'wall={contrastive_seconds:.1f}s')
 
+    print(f'\nTraining AR+JEPA-auxiliary (token-primary, latent-auxiliary) '
+         f'on {device} ...')
+    ar_jepa = build_ar_jepa(tokenizer.vocab_size, config)
+    t0 = time.time()
+    ar_jepa_history = train_ar_jepa(ar_jepa, pretrain_tokens, config, device)
+    ar_jepa_seconds = time.time() - t0
+    print(f'  final loss={ar_jepa_history[-1]["loss"]:.4f}  '
+         f'(ce={ar_jepa_history[-1]["ce"]:.4f}, '
+         f'latent={ar_jepa_history[-1]["latent"]:.4f})  '
+         f'trained_params={ar_jepa.num_params():,}  wall={ar_jepa_seconds:.1f}s')
+
     arms = [
         ('ar', encode_pooled_ar, ar_model),
         ('jepa', encode_pooled_jepa, jepa),
         ('contrastive', encode_pooled_contrastive, contrastive),
+        ('ar_jepa_aux', encode_pooled_ar, ar_jepa.ar_model),
     ]
 
     print('\nLinear probes: BANKING77 intent (77-way), '
@@ -175,6 +187,13 @@ def main():
             'loss_history_every_10': contrastive_history[::10],
             'wall_seconds': contrastive_seconds,
         },
+        'ar_jepa_aux': {
+            'num_trained_params': ar_jepa.num_params(),
+            'ar_jepa_alpha': config.ar_jepa_alpha,
+            'final_loss': ar_jepa_history[-1],
+            'loss_history_every_10': ar_jepa_history[::10],
+            'wall_seconds': ar_jepa_seconds,
+        },
         'linear_probe_accuracy': probe_results,
         'composition_task_accuracy': comp_results,
         'representation_geometry': geometry,
@@ -186,6 +205,8 @@ def main():
         'jepa_predictor': jepa.predictor.state_dict(),
         'contrastive_encoder': contrastive.encoder.state_dict(),
         'contrastive_projector': contrastive.projector.state_dict(),
+        'ar_jepa_backbone': ar_jepa.ar_model.backbone.state_dict(),
+        'ar_jepa_predictor': ar_jepa.predictor.state_dict(),
         'tokenizer_chars': tokenizer.chars,
         'config': vars(args),
     }, ckpt_path)
