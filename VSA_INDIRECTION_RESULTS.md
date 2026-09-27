@@ -156,12 +156,13 @@ this task, at this scale.
    learned gate or positional signal marking "this is a binding
    statement" vs. "this is a query") instead of asking generic per-position
    projections to discover that distinction from 192 examples.
-3. **Test the VSA mechanism on the COGS-style task instead of the
-   indirection task** — COGS-style tasks have real, learnable signal for
-   every architecture tried so far (`PHASE1_5_COGS_REPLICATION_RESULTS.md`);
-   checking whether VSA changes anything there (even if not on
-   indirection) would separate "VSA doesn't help at all" from "VSA doesn't
-   help specifically on a near-zero-data, zero-exposure task."
+3. ~~Test the VSA mechanism on the COGS-style task instead of the
+   indirection task~~ — **done, see `VSA_COGS_RESULTS.md`. Result: VSA
+   doesn't just fail to help, it clearly loses to the plain backbone on
+   both COGS-style tasks (0.266 vs 0.406, and 0.250 vs 0.750,
+   replicated) — the tie-at-floor on indirection was not "no difference
+   detectable," it was masking a real cost that shows up once there's
+   signal to lose.**
 4. Given five architectures now share this exact failure mode on the same
    task, the more informative next move may be addressing the *data*
    side directly (per `PHASE1_5_DEEP_COMPOSITION_RESULTS.md`'s
